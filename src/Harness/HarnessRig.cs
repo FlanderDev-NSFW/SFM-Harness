@@ -97,6 +97,7 @@ namespace Harness
             var ends = StretchEnds();
             foreach (var g in _file.Groups)
             {
+                if (g.Name.StartsWith("chape_")) continue;   // drawn each frame
                 if (g.Name.StartsWith("dring_")) { AddGroup(g, g.Name.EndsWith("_R") ? _ringR : _ringL, U(g.Pivot), Quaternion.identity, mats, layer); continue; }
                 if (g.Name.StartsWith("rigid_"))
                 {
@@ -141,6 +142,7 @@ namespace Harness
                 else _own[g.Name] = AddGroup(g, _top.transform, U(g.Pivot), Quaternion.identity, mats, layer);
             }
             SetupHoop(_hoopFitL, _thighL, _hoopFitR); SetupHoop(_hoopFitR, _thighR, _hoopFitL);
+            _tabR = new Tab(mats[_file.Materials.FindIndex(m => m.Name == "brown")], layer, _top.transform, _owned); _tabL = new Tab(mats[_file.Materials.FindIndex(m => m.Name == "brown")], layer, _top.transform, _owned);
             MakeWire(mats[_file.Materials.FindIndex(m => m.Name == "pink")], layer);
             Mesh tube = Tube(0.0014f, 6);
             _owned.Add(tube);
@@ -877,6 +879,7 @@ namespace Harness
             End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ps);
             End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ps);
             SwingRing(_ringR, "R", _ringLiftR, rot, ls); SwingRing(_ringL, "L", _ringLiftL, rot, ls);
+            DrawTab(_tabR, _ringR, "R", ls); DrawTab(_tabL, _ringL, "L", ls);
             foreach (var st in _stretches)
             {
                 Vector3 a = Point(st.From, st.Start, st.FromOrigin), b = Point(st.To, st.End, st.ToOrigin), d = b - a;
@@ -1112,6 +1115,63 @@ namespace Harness
             // thighs closing in at the sides can reach under the ring; they don't push it further out than a little past her middle
             if (centre < 8f) lowest = Mathf.Max(lowest, centre - 0.006f);
             return lowest > 8f ? -9f : 0.015f * ps + 0.001f - lowest;
+        }
+
+        /// <summary>
+        /// A leather tab as a strip: from its rivets down the belt, out over the trim, round the ring's top bar and back. It is drawn each frame, so it leans
+        /// and draws out towards wherever the ring pulls it.
+        /// </summary>
+        private sealed class Tab
+        {
+            public const int Ctrl = 9, Per = 3, Rings = (Ctrl - 1) * Per + 1;
+            public readonly Mesh Mesh; public readonly Vector3[] V = new Vector3[Rings * 4];
+            public Tab(Material brown, int layer, Transform parent, List<UnityEngine.Object> owned)
+            {
+                var t = new int[(Rings - 1) * 4 * 6];
+                for (int r = 0, o = 0; r + 1 < Rings; r++)
+                    for (int i = 0; i < 4; i++)
+                    {
+                        int a = r * 4 + i, b = r * 4 + (i + 1) % 4, c = a + 4, d = b + 4;
+                        t[o++] = a; t[o++] = b; t[o++] = c; t[o++] = b; t[o++] = d; t[o++] = c;
+                    }
+                Mesh = new Mesh { name = Tag + "Tab", vertices = V, triangles = t };
+                owned.Add(Mesh);
+                var go = new GameObject("tab"); go.layer = layer; go.transform.SetParent(parent, false);
+                go.AddComponent<MeshFilter>().sharedMesh = Mesh;
+                var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = brown; mr.allowOcclusionWhenDynamic = false;
+            }
+        }
+
+        private Tab _tabR, _tabL;
+
+        private void DrawTab(Tab tab, Transform ring, string side, float ls)
+        {
+            Vector3 top = Point(_belt, Sock("SOCKET_chape_top_" + side), Vector3.zero), mid = Point(_belt, Sock("SOCKET_chape_mid_" + side), Vector3.zero), p = ring.position;
+            Vector3 pull = (ring.rotation * (Sock("SOCKET_vstrap_top_" + side) - Sock("SOCKET_chape_" + side))).normalized, bar = (ring.rotation * (Sock("SOCKET_chape_x_" + side) - Sock("SOCKET_chape_" + side))).normalized;
+            Vector3 centre = _belt.position + _belt.rotation * new Vector3(_band.CentreX, 0f, _band.CentreZ), beltUp = _belt.rotation * Vector3.up;
+            Vector3 outward = Vector3.ProjectOnPlane(p - centre, beltUp).normalized, face = Vector3.Cross(bar, pull).normalized;
+            if (Vector3.Dot(face, outward) < 0f) face = -face;
+            top += outward * (0.0045f * ls); mid += outward * (0.0035f * ls);   // on top of the belt's strap, under the rivets
+            float thick = 0.0018f * ls, rho = 0.0016f * ls + thick / 2 + 0.0002f, half = 0.0052f * ls, back = thick * 1.3f;
+            // the middle of the tab leans towards the pull; the rivets hold its top end
+            Vector3 lean = Vector3.ProjectOnPlane(pull, beltUp) * ((mid - p).magnitude * 0.45f);
+            var c = new NVector3[Tab.Ctrl];
+            void Set(int i, Vector3 v) => c[i] = new NVector3(v.x, v.y, v.z);
+            Set(0, top); Set(1, mid + Vector3.ProjectOnPlane(lean, outward));
+            for (int i = 0; i < 5; i++) { float a = i * Mathf.PI / 4f; Set(2 + i, p + (face * Mathf.Cos(a) + pull * Mathf.Sin(a)) * rho); }
+            Set(7, mid + Vector3.ProjectOnPlane(lean, outward) - outward * back); Set(8, top - outward * back);
+            var line = WirePath.Smooth(c, Tab.Per);
+            Vector3 across = Vector3.Cross(beltUp, outward).normalized; if (Vector3.Dot(across, bar) < 0f) across = -across;
+            for (int r = 0; r < line.Length; r++)
+            {
+                Vector3 q = U(line[r]), d = (U(line[Mathf.Min(r + 1, line.Length - 1)]) - U(line[Mathf.Max(r - 1, 0)])).normalized;
+                float f = Mathf.Clamp01(Mathf.Min(r, line.Length - 1 - r) / (float)(Tab.Per * 2));
+                Vector3 wide = Vector3.Lerp(across, bar, f).normalized, n = Vector3.Cross(d, wide).normalized;
+                wide = Vector3.Cross(n, d).normalized;
+                tab.V[r * 4] = q + wide * half + n * (thick / 2); tab.V[r * 4 + 1] = q - wide * half + n * (thick / 2);
+                tab.V[r * 4 + 2] = q - wide * half - n * (thick / 2); tab.V[r * 4 + 3] = q + wide * half - n * (thick / 2);
+            }
+            tab.Mesh.vertices = tab.V; tab.Mesh.RecalculateNormals(); tab.Mesh.RecalculateBounds();
         }
 
         /// <summary>A D-ring hanging from its chape on the belt, pulled towards the trapezoid by the V strap, and held off her skin where the hip widens under it.</summary>
