@@ -223,10 +223,34 @@ namespace Harness.Logic
             var o = new float[Bins];
             for (int i = 0; i < Bins; i++)
             {
-                float n = MathF.Max(need[i], 0.6f * MathF.Max(need[(i + 1) % Bins], need[(i + Bins - 1) % Bins]));
+                float n = need[i];
+                for (int k = 1; k <= 3; k++)
+                {
+                    float w = k == 1 ? 0.85f : k == 2 ? 0.6f : 0.3f;
+                    n = MathF.Max(n, w * MathF.Max(need[(i + k) % Bins], need[(i + Bins - k) % Bins]));
+                }
                 o[i] = MathF.Max(n, 0f);
             }
             for (int i = 0; i < Bins; i++) { Lower[i] += o[i]; Upper[i] += o[i]; }
+        }
+
+        /// <summary>A strap has no sharp corners: evens out single angles that stand out from their neighbours.</summary>
+        public static float[] Soft(float[] t, int passes)
+        {
+            var a = (float[])t.Clone();
+            for (int p = 0; p < passes; p++)
+            {
+                var b = new float[a.Length];
+                for (int i = 0; i < a.Length; i++) b[i] = (a[(i + a.Length - 1) % a.Length] + 2 * a[i] + a[(i + 1) % a.Length]) / 4;
+                a = b;
+            }
+            return a;
+        }
+
+        public void Smooth(int passes)
+        {
+            var l = Soft(Lower, passes); var u = Soft(Upper, passes);
+            for (int i = 0; i < Bins; i++) { Lower[i] = l[i]; Upper[i] = u[i]; }
         }
 
         private static float Lerp(float[] t, float angle)

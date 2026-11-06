@@ -564,7 +564,7 @@ namespace Harness
             var log = new System.Text.StringBuilder("[SFM-ACCEPT] bow:");
             foreach (var st in _stretches)
             {
-                if (st.Name != "vstrap_R" && st.Name != "vstrap_L" && st.Name != "rear_strap") continue;
+                if (st.Name != "vstrap_R" && st.Name != "vstrap_L" && st.Name != "rear_strap" && st.Name != "wire_down") continue;
                 Vector3 a = st.T.position, b = a + st.T.rotation * (Vector3.forward * (st.Length * st.T.localScale.z));
                 var bow = new float[n + 2]; Vector3 outward = Vector3.zero; float most = 0f;
                 for (int i = 1; i <= n; i++)
@@ -742,7 +742,7 @@ namespace Harness
             h.Node = node; h.Other = other; h.Tris = h.Mesh.triangles;
             var nv = new NVector3[h.Rest.Length];
             for (int i = 0; i < nv.Length; i++) { Vector3 f = h.ToFrame * h.Rest[i]; nv[i] = new NVector3(f.x, f.y, f.z); }
-            h.Inner = BeltBand.ModelInner(nv, 0f, 0.03f);
+            h.Inner = BeltBand.Soft(BeltBand.ModelInner(nv, 0f, 0.03f), 3);
         }
 
         /// <summary>One cut across her thigh: her skin in the strap's plane, the other leg's left out.</summary>
@@ -775,11 +775,12 @@ namespace Harness
             for (int k = 0; k < Heights.Length; k++) h.Bins[k] = Bins(Cut(f, h.Tris, Vector3.up * (Heights[k] * h.Half), Vector3.up, Vector3.right, Vector3.forward), false, h.Band);
             foreach (var st in h.Fixed)
             {
-                // where the strap takes this point, and how it turns the strap there, measured along the strap
-                Vector3 c = h.ToFrame * st.P, along = Vector3.Cross(Vector3.up, new Vector3(c.x, 0f, c.z)).normalized * 0.008f, back = Quaternion.Inverse(h.ToFrame) * along;
-                Vector3 before = back * 2f, after = h.Local(st.P + back) - h.Local(st.P - back);
+                // where the strap takes this point, and how it turns and tips the strap there: measured along the strap and across it
+                Vector3 c = h.ToFrame * st.P; Quaternion back = Quaternion.Inverse(h.ToFrame);
+                Vector3 t0 = back * (Vector3.Cross(Vector3.up, new Vector3(c.x, 0f, c.z)).normalized * 0.008f), b0 = back * (Vector3.up * 0.008f);
+                Vector3 t1 = h.Local(st.P + t0) - h.Local(st.P - t0), b1 = h.Local(st.P + b0) - h.Local(st.P - b0);
                 st.T.localPosition = h.Local(st.P);
-                st.T.localRotation = Quaternion.FromToRotation(before.normalized, after.normalized);
+                st.T.localRotation = Quaternion.LookRotation(Vector3.Cross(t1, b1), b1) * Quaternion.Inverse(Quaternion.LookRotation(Vector3.Cross(t0, b0), b0));
                 st.T.localScale = Vector3.one * h.Tall;
             }
         }
@@ -813,6 +814,7 @@ namespace Harness
             foreach (var p in mid) { x0 = Mathf.Min(x0, p.X); x1 = Mathf.Max(x1, p.X); z0 = Mathf.Min(z0, p.Y); z1 = Mathf.Max(z1, p.Y); }
             var band = BeltBand.From(ThighCut(h, w, at, frame, -half), mid, ThighCut(h, w, at, frame, half), new System.Numerics.Vector2((x0 + x1) / 2, (z0 + z1) / 2), 0.0015f, h.Inner);
             if (band == null) return;
+            band.Smooth(2);
             h.Band = band; h.Tall = sy; h.Half = half; h.Lifted = new float[BeltBand.Bins];
             h.LP = Quaternion.Inverse(bone.rotation) * (at - hp); h.LQ = Quaternion.Inverse(bone.rotation) * q;
             HoopRefit(h);
