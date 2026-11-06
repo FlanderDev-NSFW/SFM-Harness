@@ -46,7 +46,7 @@ namespace Harness
         public bool WantGap; public static bool ShowMarkers; public static bool Probe; public float WatchUntil; private float _nextWatch;
         public void Hide(bool off) { if (_top != null) foreach (var r in _top.GetComponentsInChildren<MeshRenderer>(true)) r.enabled = !off; }
         private const float BeltHalf = 0.039f, Clear = 0.002f, MaxLift = 0.012f;
-        private float _beltHalf, _nextSettle; private float[] _lifted; private float[][] _beltBins; private int[] _waistTris, _beltTris; private int _settled; private int _wantBow; public float SettleMs, LookMs; private int _looks;
+        private float _beltHalf, _nextSettle; private float[] _lifted; private float[][] _beltBins; private int[] _waistTris, _beltTris; private int _settled; private int _wantBow; private float _reachF = -9f, _reachR = -9f; public float SettleMs, LookMs; private int _looks;
         private Vector3 _cF, _cR; private bool _needMeasure = true;
         private readonly Dictionary<string, Transform> _own = new Dictionary<string, Transform>();
         private readonly List<Stretch> _stretches = new List<Stretch>();
@@ -384,7 +384,7 @@ namespace Harness
             FitThigh(_hoopFitL, w, hl, kl, hr, kr, _hipL, _hoopL, rot, sy);
             FitThigh(_hoopFitR, w, hr, kr, hl, kl, _hipR, _hoopR, rot, sy);
             _driveF.Reset(); _driveR.Reset();
-            _needMeasure = false; _fits++; _wantBow = 2;
+            _needMeasure = false; _fits++; _wantBow = 3;
             Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: waist at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", " + (x1 - x0).ToString("0.000") + " x " + (z1 - z0).ToString("0.000") + ", band height " + (half * 2).ToString("0.000") + ", size " + sy.ToString("0.00"));
         }
 
@@ -507,8 +507,11 @@ namespace Harness
             mid += right * Vector3.Dot(pos + right * _band.CentreX - mid, right);
             Transform hips = anim.GetBoneTransform(HumanBodyBones.Hips);
             float gs = _guideF.lossyScale.x;
-            _pathF = Trace(w, tris, hips, _guideF.TransformPoint(Sock("SOCKET_link_f0") - _cF), pos, 1f, 0.03f * gs, 0.002f + 0.006f * gs, right, up, fwd, mid);
-            _pathR = Trace(w, tris, hips, _guideR.TransformPoint(Sock("SOCKET_link_r0") - _cR), pos, -1f, 0.012f * gs, 0.002f + 0.004f * gs, right, up, fwd, mid);
+            _pathF = Trace(w, tris, hips, _guideF.TransformPoint(Sock("SOCKET_link_f0") - _cF), pos, 1f, 0.03f * gs, 0.03f * gs, 0.002f + 0.006f * gs, right, up, fwd, mid);
+            _pathR = Trace(w, tris, hips, _guideR.TransformPoint(Sock("SOCKET_link_r0") - _cR), pos, -1f, 0.012f * gs, 0.03f * gs, 0.002f + 0.004f * gs, right, up, fwd, mid);
+            float gsn = _guideF.lossyScale.x;
+            _reachF = Snug(w, _anchorF.position, -_axisObjF.forward, gsn); _reachR = Snug(w, _anchorR.position, -_axisObjR.forward, gsn);
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] snug: front " + (_reachF * 1000).ToString("0.0") + " rear " + (_reachR * 1000).ToString("0.0") + " mm out from the anchors; model units " + (_reachF / gsn).ToString("0.0000") + " " + (_reachR / gsn).ToString("0.0000"));
             const int n = 10;
             var log = new System.Text.StringBuilder("[SFM-ACCEPT] bow:");
             foreach (var st in _stretches)
@@ -790,8 +793,8 @@ namespace Harness
             }
             // each guide on its own axis, as the game aims its own machine; the joints and the shared link take up the difference
             Vector3 tf = _anchorF.position, tr = _anchorR.position, uF = -_axisObjF.forward, uR = -_axisObjR.forward;
-            float reach = Plugin.GuideDrop.Value * ls;
-            Vector3 cF = tf - uF * reach, cR = tr - uR * reach;
+            float fallback = Plugin.GuideDrop.Value * ls;
+            Vector3 cF = tf - uF * (_reachF > -8f ? _reachF : fallback), cR = tr - uR * (_reachR > -8f ? _reachR : fallback);
             _guideF.SetPositionAndRotation(cF, Quaternion.FromToRotation(rot * _axisF, uF) * rot);
             _guideR.SetPositionAndRotation(cR, Quaternion.FromToRotation(rot * _axisR, uR) * rot);
             _guideF.localScale = _guideR.localScale = Vector3.one * ls;
@@ -842,21 +845,28 @@ namespace Harness
         /// Her midline, from the guides up to the belt: a cut down her middle, front or back, as a path a little off her skin. Kept in her hips' frame,
         /// which is what the guides ride on. At the back it spans the cleft, as a strap would.
         /// </summary>
-        private Vector3[] Trace(Vector3[] w, int[] tris, Transform hips, Vector3 start, Vector3 end, float side, float span, float lift, Vector3 right, Vector3 up, Vector3 fwd, Vector3 mid)
+        private Vector3[] Trace(Vector3[] w, int[] tris, Transform hips, Vector3 start, Vector3 end, float side, float span, float spanTop, float lift, Vector3 right, Vector3 up, Vector3 fwd, Vector3 mid)
         {
             const float step = 0.006f;
             float h0 = Vector3.Dot(start - mid, up), h1 = Vector3.Dot(end - mid, up);
             int n = Mathf.CeilToInt((h1 - h0) / step) + 1;
             if (n < 3) return null;
-            var val = new float[n]; var seen = new bool[n];
-            foreach (float x in span > 0f ? new[] { -span, 0f, span } : new[] { 0f })
-                foreach (var q in Cut(w, tris, mid + right * x, right, up, fwd, _arm))
-                {
-                    int b = Mathf.RoundToInt((q.X - h0) / step);
-                    if (b < 0 || b >= n) continue;
-                    float f = q.Y * side;
-                    if (!seen[b] || f > val[b]) { val[b] = f; seen[b] = true; }
-                }
+            float[] Profile(float width, out bool[] seen)
+            {
+                var v = new float[n]; var hit = new bool[n];
+                foreach (float x in width > 0f ? new[] { -width, 0f, width } : new[] { 0f })
+                    foreach (var q in Cut(w, tris, mid + right * x, right, up, fwd, _arm))
+                    {
+                        int b = Mathf.RoundToInt((q.X - h0) / step);
+                        if (b < 0 || b >= n) continue;
+                        float f = q.Y * side;
+                        if (!hit[b] || f > v[b]) { v[b] = f; hit[b] = true; }
+                    }
+                seen = hit; return v;
+            }
+            var val = Profile(span, out var seen); var wide = Profile(spanTop, out var seenTop);
+            // from the lug the chain starts narrow, on the floor of a hollow, and rises to the wider pieces' level higher up
+            for (int i = 0; i < n; i++) if (seen[i] && seenTop[i]) val[i] = Mathf.Lerp(val[i], wide[i], Mathf.Clamp01(i * step / 0.03f));
             var pts = new List<Vector3>();
             float last = Vector3.Dot(start - mid, fwd) * side;
             for (int i = 0; i < n; i++)
@@ -916,6 +926,27 @@ namespace Harness
                 }
             }
             _wire.vertices = _wireV; _wire.normals = _wireN; _wire.RecalculateBounds();
+        }
+
+        /// <summary>
+        /// How far out along its axis a guide sits so its band rests on her: the skin nearest the outside, inside most of the band's width, against the band's upper edge.
+        /// The rim itself may touch skin to the sides, so the outer quarter doesn't count.
+        /// </summary>
+        private float Snug(Vector3[] w, Vector3 anchor, Vector3 u, float ps)
+        {
+            float rb = 0.0465f * ps * 0.75f, lowest = 9f, centre = 9f;
+            for (int i = 0; i < w.Length; i++)
+            {
+                if (_arm[i]) continue;
+                Vector3 p = w[i] - anchor; float z = Vector3.Dot(p, u);
+                if (z < -0.08f || z > 0.08f) continue;
+                float r2 = (p - u * z).sqrMagnitude;
+                if (r2 < rb * rb && z < lowest) lowest = z;
+                if (r2 < rb * rb * 0.25f && z < centre) centre = z;
+            }
+            // thighs closing in at the sides can reach under the ring; they don't push it further out than a little past her middle
+            if (centre < 8f) lowest = Mathf.Max(lowest, centre - 0.006f);
+            return lowest > 8f ? -9f : 0.015f * ps + 0.001f - lowest;
         }
 
         private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)
