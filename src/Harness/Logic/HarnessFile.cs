@@ -77,17 +77,35 @@ namespace Harness.Logic
     /// <summary>Which rig node a group hangs on. Beta's R side (+X there) is her left.</summary>
     public static class GroupMap
     {
-        public const string Root = "root", LeftThigh = "thighL", RightThigh = "thighR", PistonFront = "pistonF", PistonRear = "pistonR";
+        public const string Belt = "belt", Lower = "lower", LeftThigh = "thighL", RightThigh = "thighR", PistonFront = "pistonF", PistonRear = "pistonR", Own = "own";
 
         public static string NodeOf(string group)
         {
-            if (group == "end_front_thigh") return RightThigh;  // the front cord starts on Beta's L hoop: her right thigh
-            if (group == "end_rear_thigh") return LeftThigh;
-            if (group.StartsWith("thigh_", StringComparison.Ordinal) || group.StartsWith("ring_", StringComparison.Ordinal))
-                return group.EndsWith("_R", StringComparison.Ordinal) ? LeftThigh : RightThigh;
-            if (group.Contains("piston"))
-                return group.Contains("front") ? PistonFront : PistonRear;
-            return Root;
+            if (group == "belt") return Belt;
+            if (group == "lower") return Lower;
+            if (group == "piston_front") return PistonFront;
+            if (group == "piston_rear") return PistonRear;
+            if (group == "thigh_R") return LeftThigh;
+            if (group == "thigh_L") return RightThigh;
+            return Own; // rings, cord ends, stretched straps, springs and wire are placed one by one
+        }
+    }
+
+    /// <summary>Turns cord length into piston travel. The cord is slack for a little past its length with her legs straight down, then pulls.
+    /// All lengths are shares of her thigh, so it works the same on any body.</summary>
+    public sealed class PistonDrive
+    {
+        public const float Slack = 0.12f, FullAt = 0.50f, Lag = 0.06f;
+        public float Stroke { get; private set; } // 0..1
+
+        public void Reset() { Stroke = 0f; }
+
+        public void Update(float cordLength, float restLength, float thigh, float dt)
+        {
+            float want = ((cordLength - restLength) / thigh - Slack) / FullAt;
+            want = want < 0f ? 0f : want > 1f ? 1f : want;
+            float k = dt <= 0f ? 1f : 1f - (float)Math.Exp(-dt / Lag);
+            Stroke += (want - Stroke) * k;
         }
     }
 

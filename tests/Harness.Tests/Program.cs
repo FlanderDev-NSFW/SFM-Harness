@@ -17,12 +17,18 @@ namespace Harness.Tests
         {
             string file = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Harness", "assets", "harness.hrn"));
             var m = HarnessFile.Read(System.IO.File.OpenRead(file));
-            Check(m.Groups.Count == 18, "18 moving groups");
+            Check(m.Groups.Count == 23, "23 moving groups");
             Check(m.TriangleCount() > 50000, "whole model present");
             Check(m.Sockets.ContainsKey("SOCKET_cord_front") && m.Sockets.ContainsKey("BODY_hoop_R"), "sockets present");
             Check(m.Sockets["BODY_hip_R"].Position.X < 0, "Beta's right is her left: -X in Unity");
             Check(m.Sockets["SOCKET_guide_front"].Position.Z > m.Sockets["SOCKET_guide_rear"].Position.Z, "front guide is towards +Z");
-            Check(GroupMap.NodeOf("ring_eyelet_R") == GroupMap.LeftThigh && GroupMap.NodeOf("end_front_piston") == GroupMap.PistonFront && GroupMap.NodeOf("hips") == GroupMap.Root, "groups hang on the right nodes");
+            Check(GroupMap.NodeOf("thigh_R") == GroupMap.LeftThigh && GroupMap.NodeOf("piston_front") == GroupMap.PistonFront && GroupMap.NodeOf("ring_eyelet_R") == GroupMap.Own, "groups hang on the right nodes");
+            var d = new PistonDrive();
+            d.Update(1f, 1f, 1f, 0f); Check(d.Stroke == 0f, "legs straight: no travel");
+            d.Update(1.1f, 1f, 1f, 0f); Check(d.Stroke == 0f, "slack takes up the first stretch");
+            d.Update(2f, 1f, 1f, 0f); Check(d.Stroke == 1f, "full travel, and no further");
+            d.Update(1.37f, 1f, 1f, 0f); Check(Math.Abs(d.Stroke - 0.5f) < 0.001f, "half way");
+            d.Update(1.37f, 1f, 2f, 0f); Check(d.Stroke < 0.5f, "a longer thigh needs a longer pull");
             var span = SliceStats.CentralSpan(new System.Collections.Generic.List<float> { -0.3f, -0.1f, 0f, 0.1f, 0.34f }, 0.15f);
             Check(span.Min == -0.1f && span.Max == 0.1f, "arms beside the waist are left out");
 
