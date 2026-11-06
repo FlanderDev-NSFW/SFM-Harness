@@ -255,8 +255,8 @@ namespace Harness.Logic
     }
 
     /// <summary>
-    /// A chain of rigid pieces laid along a path: from the start, each joint is the first point on the path one piece's length from the joint before.
-    /// Past the path's end it carries straight on. Returns every joint, the start first.
+    /// A chain of rigid pieces laid along a path. Pieces never stretch: each joint is exactly one piece's length from the joint before, aimed at the
+    /// path further on, so a chain starting off the path climbs back to it. Past the path's end it carries straight on. Returns every joint, the start first.
     /// </summary>
     public static class ChainPath
     {
@@ -265,24 +265,50 @@ namespace Harness.Logic
             var o = new Vector3[lengths.Count + 1]; o[0] = start;
             int seg = 0; float best = float.MaxValue;
             for (int i = 0; i < path.Count; i++) { float d = Vector3.DistanceSquared(path[i], start); if (d < best) { best = d; seg = i; } }
+            Vector3 way = path.Count > 1 ? Vector3.Normalize(path[path.Count - 1] - path[0]) : Vector3.UnitY;
             for (int k = 0; k < lengths.Count; k++)
             {
-                Vector3 from = o[k]; float l = lengths[k]; bool found = false;
-                for (int i = seg; i + 1 < path.Count && !found; i++)
+                Vector3 from = o[k], dir = path.Count > 1 ? Vector3.Normalize(path[path.Count - 1] - path[path.Count - 2]) : Vector3.UnitY; float l = lengths[k];
+                for (int i = seg; i + 1 < path.Count; i++)
                 {
-                    if (Vector3.Distance(path[i + 1], from) < l) continue;
-                    // the far end of this piece of path is past l, so take the far crossing
-                    Vector3 a = path[i], d = path[i + 1] - a, f = a - from;
+                    Vector3 end = path[i + 1];
+                    if (Vector3.Distance(end, from) < l || Vector3.Dot(end - from, way) < 0.6f * l) continue;
+                    Vector3 a = path[i], d = end - a, f = a - from;
                     float A = Vector3.Dot(d, d), B = 2 * Vector3.Dot(f, d), C = Vector3.Dot(f, f) - l * l, disc = B * B - 4 * A * C;
                     float t = A > 1e-12f && disc >= 0 ? (-B + MathF.Sqrt(disc)) / (2 * A) : 1f;
-                    o[k + 1] = a + d * Math.Clamp(t, 0f, 1f); seg = i; found = true;
+                    dir = Vector3.Normalize(a + d * Math.Clamp(t, 0f, 1f) - from); seg = i;
+                    break;
                 }
-                if (found) continue;
-                Vector3 dir = path.Count > 1 ? Vector3.Normalize(path[path.Count - 1] - path[path.Count - 2]) : Vector3.UnitY;
                 o[k + 1] = from + dir * l;
             }
             return o;
         }
+    }
+
+    /// <summary>A smooth line through control points (centripetal Catmull-Rom, which doesn't overshoot where points crowd together).</summary>
+    public static class WirePath
+    {
+        public static Vector3[] Smooth(IList<Vector3> c, int per)
+        {
+            int n = c.Count;
+            var o = new Vector3[(n - 1) * per + 1];
+            for (int i = 0; i + 1 < n; i++)
+            {
+                Vector3 p1 = c[i], p2 = c[i + 1], p0 = i > 0 ? c[i - 1] : p1 + (p1 - p2), p3 = i + 2 < n ? c[i + 2] : p2 + (p2 - p1);
+                float t0 = 0, t1 = t0 + Knot(p0, p1), t2 = t1 + Knot(p1, p2), t3 = t2 + Knot(p2, p3);
+                for (int k = 0; k < per; k++)
+                {
+                    float t = t1 + (t2 - t1) * k / per;
+                    Vector3 a1 = Mix(p0, p1, t0, t1, t), a2 = Mix(p1, p2, t1, t2, t), a3 = Mix(p2, p3, t2, t3, t);
+                    o[i * per + k] = Mix(Mix(a1, a2, t0, t2, t), Mix(a2, a3, t1, t3, t), t1, t2, t);
+                }
+            }
+            o[o.Length - 1] = c[n - 1];
+            return o;
+        }
+
+        private static float Knot(Vector3 a, Vector3 b) => MathF.Max(MathF.Sqrt(Vector3.Distance(a, b)), 1e-4f);
+        private static Vector3 Mix(Vector3 a, Vector3 b, float ta, float tb, float t) => a + (b - a) * ((t - ta) / (tb - ta));
     }
 
     /// <summary>Turns cord length into piston travel. The cord is slack for a little past its length with her legs straight down, then pulls.

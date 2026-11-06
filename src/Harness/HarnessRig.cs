@@ -33,7 +33,8 @@ namespace Harness
 
         private readonly Hoop _hoopFitL = new Hoop(), _hoopFitR = new Hoop();
 
-        private sealed class Stretch { public Transform T; public Vector3 Start, End, Hint; public float Length; public string Name; public Mesh Mesh; public Vector3[] Rest; public Transform From, To; public Vector3 FromOrigin, ToOrigin; }
+        private sealed class Stretch { public Transform T; public Vector3 Start, End, Hint; public float Length; public string Name; public Mesh Mesh; public Vector3[] Rest; public float[] Bow; public Vector3 Out;
+            public float BowAt(float t) { if (Bow == null) return 0f; float f = Mathf.Clamp01(t) * (Bow.Length - 1); int k = Mathf.Min((int)f, Bow.Length - 2); return Mathf.Lerp(Bow[k], Bow[k + 1], f - k); } public Transform From, To; public Vector3 FromOrigin, ToOrigin; }
 
         private readonly HarnessFile _file;
         private GameObject _top;
@@ -86,6 +87,7 @@ namespace Harness
             var ends = StretchEnds();
             foreach (var g in _file.Groups)
             {
+                if (g.Name == "wire_up") continue;   // drawn along the chain and strap each frame
                 if (g.Name.StartsWith("link_"))
                 {
                     int i = g.Name[6] - '0';
@@ -118,6 +120,7 @@ namespace Harness
                 }
                 else _own[g.Name] = AddGroup(g, _top.transform, U(g.Pivot), Quaternion.identity, mats, layer);
             }
+            MakeWire(mats[_file.Materials.FindIndex(m => m.Name == "pink")], layer);
             Mesh tube = Tube(0.0014f, 6);
             _owned.Add(tube);
             int cordMat = _file.Materials.FindIndex(m => m.Name == "cord");
@@ -146,7 +149,6 @@ namespace Harness
             d["vstrap_L"] = S("SOCKET_vstrap_top_L", _belt, Vector3.zero, "SOCKET_vstrap_bottom_L", _linkF[3], Sock("SOCKET_link_f3"));
             d["rear_strap"] = S("SOCKET_rear_strap_top", _belt, Vector3.zero, "SOCKET_rear_strap_bottom", _linkR[2], Sock("SOCKET_link_r2"));
             d["hinge_link"] = S("SOCKET_hinge_front", _guideF, _cF, "SOCKET_hinge_rear", _guideR, _cR); d["hinge_link"].Hint = Vector3.up;
-            d["wire_up"] = S("WIRE_tip", _linkF[1], Sock("SOCKET_link_f1") + Sock("WIRE_tip") - Sock("SOCKET_capsule_wire"), "WIRE_mid", _belt, Vector3.zero);
             d["wire_down"] = S("WIRE_mid", _belt, Vector3.zero, "WIRE_end", _thighL, _hoopL);
             foreach (string tag in new[] { "front", "rear" })
                 foreach (string side in new[] { "R", "L" })
@@ -205,7 +207,7 @@ namespace Harness
                 float a = i * Mathf.PI * 2 / sides; var d = new Vector3(Mathf.Cos(a), Mathf.Sin(a), 0);
                 v[i] = d * radius; v[i + sides] = d * radius + Vector3.forward; n[i] = d; n[i + sides] = d;
                 int j = (i + 1) % sides, o = i * 6;
-                t[o] = i; t[o + 1] = i + sides; t[o + 2] = j; t[o + 3] = j; t[o + 4] = i + sides; t[o + 5] = j + sides;
+                t[o] = i; t[o + 1] = j; t[o + 2] = i + sides; t[o + 3] = j; t[o + 4] = j + sides; t[o + 5] = i + sides;
             }
             var m = new Mesh { name = Tag + "Cord", vertices = v, normals = n, triangles = t };
             m.RecalculateBounds();
@@ -544,7 +546,17 @@ namespace Harness
                     float off = Mathf.Lerp(bow[k], bow[k + 1], f - k);
                     v[i] = st.Rest[i] + new Vector3(lo.x * off / sc.x, lo.y * off / sc.y, lo.z * off / sc.z);
                 }
-                st.Mesh.vertices = v; st.Mesh.RecalculateNormals(); st.Mesh.RecalculateBounds();
+                st.Mesh.vertices = v; st.Mesh.RecalculateNormals(); st.Mesh.RecalculateBounds(); st.Out = lo;
+                // how far the strap's outer face stands off the line between its ends, along its length, for whatever lies on top of it
+                var face = new float[n + 2]; var hit = new bool[n + 2];
+                for (int i = 0; i < v.Length; i++)
+                {
+                    int k = Mathf.Clamp(Mathf.RoundToInt(v[i].z / st.Length * (n + 1)), 0, n + 1); float h = v[i].x * sc.x * lo.x + v[i].y * sc.y * lo.y;
+                    if (!hit[k] || h > face[k]) { face[k] = h; hit[k] = true; }
+                }
+                for (int i = 1; i < face.Length; i++) if (!hit[i]) { face[i] = face[i - 1]; hit[i] = hit[i - 1]; }
+                for (int i = face.Length - 2; i >= 0; i--) if (!hit[i]) face[i] = face[i + 1];
+                st.Bow = face;
                 log.Append(' ').Append(st.Name).Append(' ').Append((most * 1000).ToString("0")).Append(" mm");
             }
             Plugin.Logger.LogInfo(log.ToString());
@@ -752,6 +764,7 @@ namespace Harness
                 st.T.localScale = new Vector3(sw, sw, d.magnitude / st.Length);
             }
             if (_wantBow > 0) { _wantBow--; Bow(anim); }
+            DrawWire(rot, ls, ps);
             Settle(anim);
             if (WatchUntil > Time.time && Time.time >= _nextWatch) { _nextWatch = Time.time + 0.2f; WantGap = true; }
             if (WantGap) { WantGap = false; GapReport(anim); }
@@ -842,6 +855,57 @@ namespace Harness
                 pts.Add(Quaternion.Inverse(hips.rotation) * (p - hips.position));
             }
             return pts.ToArray();
+        }
+
+        private const int WireSides = 6, WirePer = 4, WireCtrl = 9;
+        private Mesh _wire; private Vector3[] _wireV, _wireN;
+
+        private void MakeWire(Material pink, int layer)
+        {
+            int rings = (WireCtrl - 1) * WirePer + 1;
+            var t = new int[(rings - 1) * WireSides * 6];
+            for (int r = 0, o = 0; r + 1 < rings; r++)
+                for (int i = 0; i < WireSides; i++)
+                {
+                    int a = r * WireSides + i, b = r * WireSides + (i + 1) % WireSides, c = a + WireSides, d = b + WireSides;
+                    t[o++] = a; t[o++] = b; t[o++] = c; t[o++] = b; t[o++] = d; t[o++] = c;
+                }
+            _wireV = new Vector3[rings * WireSides]; _wireN = new Vector3[rings * WireSides];
+            _wire = new Mesh { name = Tag + "Wire", vertices = _wireV, normals = _wireN, triangles = t };
+            _owned.Add(_wire);
+            var go = new GameObject("wire_up"); go.layer = layer; go.transform.SetParent(_top.transform, false);
+            go.AddComponent<MeshFilter>().sharedMesh = _wire;
+            var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = pink; mr.allowOcclusionWhenDynamic = false;
+        }
+
+        /// <summary>The wire from the capsule's tip: out along the capsule, over the link and trapezoid, up the outside of the right V strap, to the belt keeper.</summary>
+        private void DrawWire(Quaternion rot, float ls, float ps)
+        {
+            var st = _stretches.Find(x => x.Name == "vstrap_R");
+            Vector3 f1 = Sock("SOCKET_link_f1"), along = _linkF[1].rotation * (Sock("SOCKET_link_f2") - f1).normalized, tip = _linkF[1].TransformPoint(Sock("SOCKET_capsule_wire") - f1);
+            Vector3 over = _linkF[2].rotation * Vector3.forward, top = st.T.position, bottom = top + st.T.rotation * (Vector3.forward * (st.Length * st.T.localScale.z));
+            Vector3 face = st.Bow != null ? st.T.rotation * st.Out : over;
+            Vector3 OnStrap(float t) => bottom + (top - bottom) * t + face * (st.BowAt(1f - t) + 0.0035f * ls);
+            var c = new NVector3[WireCtrl];
+            void Set(int i, Vector3 p) => c[i] = new NVector3(p.x, p.y, p.z);
+            Set(0, tip); Set(1, tip + along * (0.014f * ps)); Set(2, _linkF[3].position + over * (0.0095f * ps));
+            Set(3, OnStrap(0.03f)); Set(4, OnStrap(0.3f)); Set(5, OnStrap(0.55f));
+            Set(6, Point(_belt, Sock("SOCKET_wire_belt_a"), Vector3.zero)); Set(7, Point(_belt, Sock("SOCKET_wire_belt_b"), Vector3.zero)); Set(8, Point(_belt, Sock("WIRE_mid"), Vector3.zero));
+            var line = WirePath.Smooth(c, WirePer);
+            float radius = 0.0016f * ls;
+            Vector3 side = rot * Vector3.right;
+            for (int r = 0; r < line.Length; r++)
+            {
+                Vector3 p = U(line[r]), d = U(line[Mathf.Min(r + 1, line.Length - 1)]) - U(line[Mathf.Max(r - 1, 0)]);
+                d = d.sqrMagnitude > 1e-12f ? d.normalized : Vector3.up;
+                side = Vector3.ProjectOnPlane(side, d).normalized; Vector3 other = Vector3.Cross(d, side);
+                for (int i = 0; i < WireSides; i++)
+                {
+                    float a = i * 2f * Mathf.PI / WireSides; Vector3 n = side * Mathf.Cos(a) + other * Mathf.Sin(a);
+                    _wireV[r * WireSides + i] = p + n * radius; _wireN[r * WireSides + i] = n;
+                }
+            }
+            _wire.vertices = _wireV; _wire.normals = _wireN; _wire.RecalculateBounds();
         }
 
         private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)

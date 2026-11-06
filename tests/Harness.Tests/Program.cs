@@ -50,6 +50,14 @@ namespace Harness.Tests
             Check(Math.Abs(jn[1].Y - 0.5f) < 1e-4f && Math.Abs(jn[2].Y - 1f) < 1e-4f, "chain: joints walk up the path");
             Check(Math.Abs(System.Numerics.Vector3.Distance(jn[2], jn[3]) - 0.5f) < 1e-3f && jn[3].X > 0.4f, "chain: pieces keep their length round a bend");
             Check(Math.Abs(System.Numerics.Vector3.Distance(jn[3], jn[4]) - 2f) < 1e-3f, "chain: past the end it carries straight on");
+            var off = ChainPath.Walk(bend, new System.Numerics.Vector3(-0.6f, 0f, 0f), new[] { 0.3f, 0.3f, 0.3f });
+            bool exact = true; for (int i = 0; i < 3; i++) exact &= Math.Abs(System.Numerics.Vector3.Distance(off[i], off[i + 1]) - 0.3f) < 1e-4f;
+            Check(exact, "chain: pieces never stretch, even starting off the path");
+            Check(off[3].Y > off[1].Y && off[1].Y > 0.1f, "chain: off the path it climbs, not straight across");
+            var wc = new[] { new System.Numerics.Vector3(0, 0, 0), new System.Numerics.Vector3(0, 0.01f, 0), new System.Numerics.Vector3(1, 1, 0), new System.Numerics.Vector3(2, 1, 0) };
+            var ws = WirePath.Smooth(wc, 4);
+            Check(ws.Length == 13 && ws[4] == wc[1] && ws[8] == wc[2] && ws[12] == wc[3], "wire: passes through its points");
+            Check(ws[2].Y > -0.01f && ws[2].Y < 0.02f, "wire: no overshoot where points crowd");
             var lift = new float[BeltBand.Bins]; lift[0] = 0.01f; band.Lift(lift);
             Check(Math.Abs(band.Lower[0] - 0.21f) < 0.002f && band.Lower[1] > band.Lower[3], "band: a push out spreads to its neighbours");
             band = BeltBand.From(ring, ring3, ring3, System.Numerics.Vector2.Zero, 0f, inner);
