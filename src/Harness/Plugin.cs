@@ -18,7 +18,7 @@ namespace Harness
 
         internal static ManualLogSource Logger;
         internal static Restraint Entry;
-        public static ConfigEntry<float> AttemptSeconds, SuccessChance, HoopAlongThigh, ScaleTrim;
+        public static ConfigEntry<float> AttemptSeconds, SuccessChance, HoopAlongThigh, ScaleTrim, ForceStroke, GuideDrop;
 
         public override void Load()
         {
@@ -27,6 +27,9 @@ namespace Harness
             SuccessChance = Config.Bind("Unlock", "SuccessChance", 1f, "Chance that an attempt frees her.");
             HoopAlongThigh = Config.Bind("Fit", "HoopAlongThigh", 0.6f, "Where the hoop sits, as a share of the way from hip to knee.");
             ScaleTrim = Config.Bind("Fit", "ScaleTrim", 1f, "Multiplies the model's size.");
+
+            GuideDrop = Config.Bind("Fit", "GuideDrop", 0.03f, "How far the centre of each guide band sits below its anchor in her pelvis, in model metres.");
+            ForceStroke = Config.Bind("Debug", "ForceStroke", -1f, "0 to 1 holds both pistons at that travel, for checking the fit. Below 0: normal.");
 
             ClassInjector.RegisterTypeInIl2Cpp<HarnessController>();
             AddComponent<HarnessController>();

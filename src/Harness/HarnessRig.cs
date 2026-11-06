@@ -8,29 +8,45 @@ using NVector3 = System.Numerics.Vector3;
 namespace Harness
 {
     /// <summary>
-    /// Builds the model as rigid meshes and places them on her each frame. The belt sits at her waist, the lower assembly (guides, pistons,
-    /// front chain, ring) at the bottom of her pelvis, the hoops on her thighs. Straps, springs and wire stretch between those; rings swing to
+    /// Builds the model as rigid meshes and places them on her each frame. The belt follows her outline at the waist, the guides and pistons line up with
+    /// the game's own anchor bones in her pelvis (chains hang from the guides), the hoops sit on her thighs. Straps, springs and wire stretch between those; rings swing to
     /// their pull. Sizes come from a bake of her body, positions from the bones (a bake only roughly matches them).
     /// </summary>
     internal sealed class HarnessRig
     {
         private const string Tag = "Harness.";
         // Beta's sizes: the belt's opening, the hoop's opening, the belt's height, and the point of the model that goes at her crotch.
-        private const float BeltInX = 0.136f, BeltInZ = 0.118f, BeltY = 0.219f, HoopInX = 0.0805f, HoopInZ = 0.0765f, Room = 1.04f, WaistShare = 0.45f, CrotchShare = 0.32f, StrokeMetres = 0.09f;
-        private static readonly Vector3 Crotch = new Vector3(0f, -0.06f, 0.034f);
+        private const float BeltInX = 0.136f, BeltInZ = 0.118f, BeltY = 0.219f, HoopInX = 0.0805f, HoopInZ = 0.0765f, Room = 1.04f, WaistShare = 0.45f, StrokeMetres = 0.09f, PistonTip = 0.237f;
+
+        /// <summary>A hoop shaped to her thigh: the model's hoop in a frame with Y along the thigh, moved onto the thigh's outline.</summary>
+        private sealed class Hoop
+        {
+            public Quaternion ToFrame; public BeltShape Shape; public float Tall = 1f; public Mesh Mesh; public Vector3[] Rest;
+            public Vector3 Local(Vector3 v)
+            {
+                if (Shape == null) return v;
+                Vector3 f = ToFrame * v;
+                var w = Shape.Warp(new NVector3(f.x, f.y, f.z), HoopInX, HoopInZ, 0f, Tall, Tall);
+                return Quaternion.Inverse(ToFrame) * new Vector3(w.X, w.Y, w.Z);
+            }
+        }
+
+        private readonly Hoop _hoopFitL = new Hoop(), _hoopFitR = new Hoop();
 
         private sealed class Stretch { public Transform T; public Vector3 Start, End, Hint; public float Length; public Transform From, To; public Vector3 FromOrigin, ToOrigin; }
 
         private readonly HarnessFile _file;
         private GameObject _top;
-        private Transform _belt, _lower, _thighL, _thighR, _pistonF, _pistonR;
+        private Transform _belt, _guideF, _guideR, _thighL, _thighR, _pistonF, _pistonR, _anchorF, _anchorR, _axisObjF;
+        private Mesh _beltMesh; private Vector3[] _beltRest; private BeltShape _shape; private float _beltTall = 1f, _beltThick = 1f;
+        private Vector3 _cF, _cR; private float _guideGap; private bool _needSurvey = true;
         private readonly Dictionary<string, Transform> _own = new Dictionary<string, Transform>();
         private readonly List<Stretch> _stretches = new List<Stretch>();
         private readonly Transform[] _cords = new Transform[4];
         private readonly List<UnityEngine.Object> _owned = new List<UnityEngine.Object>();
         private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive();
         private Vector3 _hipL, _hipR, _hoopL, _hoopR, _axisF, _axisR;
-        private Vector3 _scale = Vector3.one, _waist, _crotch, _hoopScaleL = Vector3.one, _hoopScaleR = Vector3.one, _hoopOffL, _hoopOffR;
+        private Vector3 _waist;
         private float _lowerScale = 1f, _nextFit, _thighLength;
         private int _fits;
         private bool _visible;
@@ -51,8 +67,9 @@ namespace Harness
             // Beta's R side is her left
             _hipL = Sock("BODY_hip_R"); _hipR = Sock("BODY_hip_L"); _hoopL = Sock("BODY_hoop_R"); _hoopR = Sock("BODY_hoop_L");
             _axisF = (Sock("AXIS_front") - Sock("SOCKET_guide_front")).normalized; _axisR = (Sock("AXIS_rear") - Sock("SOCKET_guide_rear")).normalized;
-            _belt = Node("Belt", _top.transform); _lower = Node("Lower", _top.transform); _thighL = Node("ThighL", _top.transform); _thighR = Node("ThighR", _top.transform);
-            _pistonF = Node("PistonFront", _lower); _pistonR = Node("PistonRear", _lower);
+            _cF = Sock("SOCKET_guide_front"); _cR = Sock("SOCKET_guide_rear"); _guideGap = (_cF - _cR).magnitude;
+            _belt = Node("Belt", _top.transform); _guideF = Node("GuideFront", _top.transform); _guideR = Node("GuideRear", _top.transform); _thighL = Node("ThighL", _top.transform); _thighR = Node("ThighR", _top.transform);
+            _pistonF = Node("PistonFront", _guideF); _pistonR = Node("PistonRear", _guideR);
             var mats = new Material[_file.Materials.Count];
             Material source = FindToon();
             for (int i = 0; i < mats.Length; i++) mats[i] = MakeMaterial(source, _file.Materials[i]);
@@ -62,9 +79,12 @@ namespace Harness
                 string node = GroupMap.NodeOf(g.Name);
                 if (node != GroupMap.Own)
                 {
-                    Transform parent = node switch { GroupMap.LeftThigh => _thighL, GroupMap.RightThigh => _thighR, GroupMap.PistonFront => _pistonF, GroupMap.PistonRear => _pistonR, GroupMap.Belt => _belt, _ => _lower };
-                    Vector3 origin = node == GroupMap.LeftThigh ? _hoopL : node == GroupMap.RightThigh ? _hoopR : Vector3.zero;
-                    AddGroup(g, parent, origin, Quaternion.identity, mats, layer);
+                    Transform parent = node switch { GroupMap.LeftThigh => _thighL, GroupMap.RightThigh => _thighR, GroupMap.PistonFront => _pistonF, GroupMap.PistonRear => _pistonR, GroupMap.Belt => _belt, GroupMap.GuideFront => _guideF, _ => _guideR };
+                    Vector3 origin = node == GroupMap.LeftThigh ? _hoopL : node == GroupMap.RightThigh ? _hoopR : node == GroupMap.GuideFront || node == GroupMap.PistonFront ? _cF : node == GroupMap.GuideRear || node == GroupMap.PistonRear ? _cR : Vector3.zero;
+                    var t = AddGroup(g, parent, origin, Quaternion.identity, mats, layer);
+                    if (node == GroupMap.Belt) { _beltMesh = t.GetComponent<MeshFilter>().sharedMesh; _beltRest = _beltMesh.vertices; }
+                    if (node == GroupMap.LeftThigh) { _hoopFitL.Mesh = t.GetComponent<MeshFilter>().sharedMesh; _hoopFitL.Rest = _hoopFitL.Mesh.vertices; _hoopFitL.ToFrame = Quaternion.FromToRotation((_hipL - _hoopL).normalized, Vector3.up); }
+                    if (node == GroupMap.RightThigh) { _hoopFitR.Mesh = t.GetComponent<MeshFilter>().sharedMesh; _hoopFitR.Rest = _hoopFitR.Mesh.vertices; _hoopFitR.ToFrame = Quaternion.FromToRotation((_hipR - _hoopR).normalized, Vector3.up); }
                 }
                 else if (ends.TryGetValue(g.Name, out var st))
                 {
@@ -90,7 +110,7 @@ namespace Harness
                 _cords[i] = go.transform;
             }
             _driveF.Reset(); _driveR.Reset();
-            _fits = 0; _nextFit = 0f;
+            _fits = 0; _nextFit = 0f; _needSurvey = true;
             SetVisible(false);
         }
 
@@ -99,17 +119,18 @@ namespace Harness
             var d = new Dictionary<string, Stretch>();
             Stretch S(string a, Transform from, Vector3 fromOrigin, string b, Transform to, Vector3 toOrigin) =>
                 new Stretch { Start = Sock(a), End = Sock(b), Hint = Vector3.forward, From = from, To = to, FromOrigin = fromOrigin, ToOrigin = toOrigin };
-            d["vstrap_R"] = S("SOCKET_vstrap_top_R", _belt, Vector3.zero, "SOCKET_vstrap_bottom_R", _lower, Vector3.zero);
-            d["vstrap_L"] = S("SOCKET_vstrap_top_L", _belt, Vector3.zero, "SOCKET_vstrap_bottom_L", _lower, Vector3.zero);
-            d["rear_strap"] = S("SOCKET_rear_strap_top", _belt, Vector3.zero, "SOCKET_rear_strap_bottom", _lower, Vector3.zero);
-            d["wire_up"] = S("WIRE_tip", _lower, Vector3.zero, "WIRE_mid", _belt, Vector3.zero);
+            d["vstrap_R"] = S("SOCKET_vstrap_top_R", _belt, Vector3.zero, "SOCKET_vstrap_bottom_R", _guideF, _cF);
+            d["vstrap_L"] = S("SOCKET_vstrap_top_L", _belt, Vector3.zero, "SOCKET_vstrap_bottom_L", _guideF, _cF);
+            d["rear_strap"] = S("SOCKET_rear_strap_top", _belt, Vector3.zero, "SOCKET_rear_strap_bottom", _guideR, _cR);
+            d["wire_up"] = S("WIRE_tip", _guideF, _cF, "WIRE_mid", _belt, Vector3.zero);
             d["wire_down"] = S("WIRE_mid", _belt, Vector3.zero, "WIRE_end", _thighL, _hoopL);
             foreach (string tag in new[] { "front", "rear" })
                 foreach (string side in new[] { "R", "L" })
                 {
                     string name = "spring_" + tag + "_" + side;
                     var g = _file.Groups.Find(x => x.Name == name);
-                    d[name] = new Stretch { Start = U(g.Pivot), End = Sock("SPRING_top_" + tag + "_" + side), Hint = Vector3.forward, From = _lower, To = tag == "front" ? _pistonF : _pistonR };
+                    Vector3 c = tag == "front" ? _cF : _cR;
+                    d[name] = new Stretch { Start = U(g.Pivot), End = Sock("SPRING_top_" + tag + "_" + side), Hint = Vector3.forward, From = tag == "front" ? _guideF : _guideR, To = tag == "front" ? _pistonF : _pistonR, FromOrigin = c, ToOrigin = c };
                 }
             return d;
         }
@@ -218,54 +239,71 @@ namespace Harness
             return (sx.Max - sx.Min, sz.Max - sz.Min, (sx.Max + sx.Min) / 2, (sz.Max + sz.Min) / 2);
         }
 
-        private void Fit(Animator anim)
+        private static void Aim(Transform a, Transform b, Vector3 target)
         {
+            Vector3 from = b.position - a.position, to = target - a.position;
+            if (from.sqrMagnitude > 1e-8f && to.sqrMagnitude > 1e-8f) a.rotation = Quaternion.FromToRotation(from, to) * a.rotation;
+        }
+
+        /// <summary>LateUpdate: for one moment her arms straight out to the sides, bake, put them back, and measure from that bake.</summary>
+        public void Survey(Animator anim)
+        {
+            if (!_needSurvey) return;
             Transform B(HumanBodyBones b) => anim.GetBoneTransform(b);
+            Vector3 hl = B(HumanBodyBones.LeftUpperLeg).position, hr = B(HumanBodyBones.RightUpperLeg).position, mid = (hl + hr) * 0.5f, chest = B(HumanBodyBones.Chest).position;
+            Vector3 right = (hr - hl).normalized;
+            var moved = new[] { HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm, HumanBodyBones.RightUpperArm, HumanBodyBones.RightLowerArm };
+            var saved = new Quaternion[moved.Length];
+            for (int k = 0; k < moved.Length; k++) saved[k] = B(moved[k]).localRotation;
             var smr = HarnessController.FindBody(anim);
             if (smr == null) return;
-            var mesh = new Mesh();
-            smr.BakeMesh(mesh, true);
-            Transform t = smr.transform;
-            Vector3[] raw = mesh.vertices;
-            var w = new Vector3[raw.Length];
-            for (int i = 0; i < raw.Length; i++) w[i] = t.position + t.rotation * Vector3.Scale(t.lossyScale, raw[i]);
-            UnityEngine.Object.Destroy(mesh);
-            Vector3 hl = B(HumanBodyBones.LeftUpperLeg).position, hr = B(HumanBodyBones.RightUpperLeg).position, mid = (hl + hr) * 0.5f;
-            Vector3 chest = B(HumanBodyBones.Chest).position, kl = B(HumanBodyBones.LeftLowerLeg).position, kr = B(HumanBodyBones.RightLowerLeg).position;
-            Vector3 right = (hr - hl).normalized, up = Vector3.ProjectOnPlane(chest - mid, right).normalized, fwd = Vector3.Cross(right, up);
-            float top = Vector3.Dot(chest - mid, up), h0 = top * WaistShare, step = top * 0.12f;
-            // her arms may hang against her sides: skin nearer an arm than about half its distance from the spine isn't torso
-            var torso = new List<Vector3>(w.Length);
-            Vector3 aL0 = B(HumanBodyBones.LeftUpperArm).position, aL1 = B(HumanBodyBones.LeftLowerArm).position, aL2 = B(HumanBodyBones.LeftHand).position;
-            Vector3 aR0 = B(HumanBodyBones.RightUpperArm).position, aR1 = B(HumanBodyBones.RightLowerArm).position, aR2 = B(HumanBodyBones.RightHand).position;
-            foreach (var p in w)
+            Vector3[] w;
+            try
             {
-                float axis = SegDist(p, mid, chest) * 0.45f;
-                if (SegDist(p, aL0, aL1) < axis || SegDist(p, aL1, aL2) < axis || SegDist(p, aR0, aR1) < axis || SegDist(p, aR1, aR2) < axis) continue;
-                torso.Add(p);
+                Aim(B(HumanBodyBones.LeftUpperArm), B(HumanBodyBones.LeftLowerArm), B(HumanBodyBones.LeftUpperArm).position - right);
+                Aim(B(HumanBodyBones.LeftLowerArm), B(HumanBodyBones.LeftHand), B(HumanBodyBones.LeftLowerArm).position - right);
+                Aim(B(HumanBodyBones.RightUpperArm), B(HumanBodyBones.RightLowerArm), B(HumanBodyBones.RightUpperArm).position + right);
+                Aim(B(HumanBodyBones.RightLowerArm), B(HumanBodyBones.RightHand), B(HumanBodyBones.RightLowerArm).position + right);
+                var mesh = new Mesh();
+                smr.BakeMesh(mesh, true);
+                Transform t = smr.transform;
+                Vector3[] raw = mesh.vertices;
+                w = new Vector3[raw.Length];
+                for (int i = 0; i < raw.Length; i++) w[i] = t.position + t.rotation * Vector3.Scale(t.lossyScale, raw[i]);
+                UnityEngine.Object.Destroy(mesh);
             }
-            Vector3[] tw = torso.ToArray();
-            var a = Slice(tw, mid + up * h0, up, right, fwd); var b0 = Slice(tw, mid + up * (h0 - step), up, right, fwd); var c = Slice(tw, mid + up * (h0 + step), up, right, fwd);
+            finally { for (int k = 0; k < moved.Length; k++) B(moved[k]).localRotation = saved[k]; }
+            Vector3 up = Vector3.ProjectOnPlane(chest - mid, right).normalized, fwd = Vector3.Cross(right, up);
+            Vector3 kl = B(HumanBodyBones.LeftLowerLeg).position, kr = B(HumanBodyBones.RightLowerLeg).position;
+            float top = Vector3.Dot(chest - mid, up), h0 = top * WaistShare;
+            var a = Slice(w, mid + up * h0, up, right, fwd);
             if (a.W < 0.02f) return;
-            float width = Mathf.Max(a.W, Mathf.Max(b0.W, c.W)), depth = Mathf.Max(a.D, Mathf.Max(b0.D, c.D));
-            float scx = width / 2 * Room / BeltInX, scz = depth / 2 * Room / BeltInZ, scy = (scx + scz) / 2;
-            _scale = new Vector3(scx, scy, scz);
-            _waist = new Vector3(a.X, h0, a.Z);
-            _lowerScale = scy;
-            // crotch: her thighs may touch, so the height comes from the leg's length, and front to back from the skin down the middle
-            _thighLength = (kl - hl).magnitude;
-            float ch = -CrotchShare * _thighLength, cz = 0f, f0 = 9f, f1 = -9f;
+            float scx = a.W / 2 / BeltInX, scz = a.D / 2 / BeltInZ, sy = (scx + scz) / 2, half = 0.039f * sy;
+            // everything over the belt's height, near enough to the middle not to be an arm
+            var pts = new List<System.Numerics.Vector2>();
             foreach (var p in w)
             {
                 Vector3 q = p - mid;
-                if (Mathf.Abs(Vector3.Dot(q, up) - ch) < 0.02f && Mathf.Abs(Vector3.Dot(q, right)) < 0.02f) { float z = Vector3.Dot(q, fwd); f0 = Mathf.Min(f0, z); f1 = Mathf.Max(f1, z); }
+                float y = Vector3.Dot(q, up) - h0, x = Vector3.Dot(q, right), z = Vector3.Dot(q, fwd);
+                if (Mathf.Abs(y) <= half && Mathf.Abs(x - a.X) <= a.W * 0.75f) pts.Add(new System.Numerics.Vector2(x, z));
             }
-            if (f1 > f0) cz = (f0 + f1) / 2;
-            _crotch = new Vector3(0f, ch, cz);
-            (_hoopScaleL, _hoopOffL) = FitThigh(w, hl, kl, hr, kr, right, scy);
-            (_hoopScaleR, _hoopOffR) = FitThigh(w, hr, kr, hl, kl, right, scy);
+            var shape = BeltShape.From(pts, 0.003f);
+            if (shape == null) return;
+            _shape = shape; _beltTall = sy; _beltThick = sy; _lowerScale = sy;
+            _waist = new Vector3(0f, h0, 0f);
+            var warped = new Vector3[_beltRest.Length];
+            for (int i = 0; i < warped.Length; i++) warped[i] = U(_shape.Warp(new NVector3(_beltRest[i].x, _beltRest[i].y, _beltRest[i].z), BeltInX, BeltInZ, BeltY, _beltTall, _beltThick));
+            _beltMesh.vertices = warped;
+            _beltMesh.RecalculateNormals();
+            _beltMesh.RecalculateBounds();
+            _thighLength = (kl - hl).magnitude;
+            Quaternion rotS = Quaternion.LookRotation(fwd, up);
+            FitThigh(_hoopFitL, w, hl, kl, hr, kr, _hipL, _hoopL, rotS, sy);
+            FitThigh(_hoopFitR, w, hr, kr, hl, kl, _hipR, _hoopR, rotS, sy);
             _driveF.Reset(); _driveR.Reset();
-            Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: belt " + width.ToString("0.000") + " x " + depth.ToString("0.000") + " at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", crotch " + _crotch + ", scale " + _scale + ", hoops " + _hoopScaleL + " " + _hoopScaleR);
+            _needSurvey = false; _fits++;
+            float r0 = _shape.At(0f), r90 = _shape.At(Mathf.PI / 2), r180 = _shape.At(Mathf.PI), r270 = _shape.At(-Mathf.PI / 2);
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: waist at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", outline front " + r0.ToString("0.000") + " right " + r90.ToString("0.000") + " back " + r180.ToString("0.000") + " left " + r270.ToString("0.000") + ", centre " + _shape.CentreX.ToString("0.000") + "," + _shape.CentreZ.ToString("0.000") + ", size " + sy.ToString("0.00") + ", thigh radii " + _hoopFitL.Shape?.At(0f).ToString("0.000") + " " + _hoopFitL.Shape?.At(Mathf.PI / 2).ToString("0.000") + " / " + _hoopFitR.Shape?.At(0f).ToString("0.000") + " " + _hoopFitR.Shape?.At(Mathf.PI / 2).ToString("0.000"));
         }
 
         private static float SegDist(Vector3 p, Vector3 a, Vector3 b)
@@ -275,22 +313,30 @@ namespace Harness
             return (p - (a + ab * t)).magnitude;
         }
 
-        private static (Vector3, Vector3) FitThigh(Vector3[] w, Vector3 hip, Vector3 knee, Vector3 otherHip, Vector3 otherKnee, Vector3 right, float sy)
+        private void FitThigh(Hoop h, Vector3[] w, Vector3 hip, Vector3 knee, Vector3 otherHip, Vector3 otherKnee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot, float sy)
         {
-            Vector3 d = (knee - hip).normalized, at = hip + (knee - hip) * Plugin.HoopAlongThigh.Value, oat = otherHip + (otherKnee - otherHip) * Plugin.HoopAlongThigh.Value;
-            Vector3 a = Vector3.ProjectOnPlane(right, d).normalized, b = Vector3.Cross(a, d);
-            float a0 = 9, a1 = -9, b0 = 9, b1 = -9;
+            float f = Plugin.HoopAlongThigh.Value, len = (knee - hip).magnitude, half = 0.024f * sy + 0.004f;
+            Vector3 at = hip + (knee - hip) * f, oat = otherHip + (otherKnee - otherHip) * f;
+            Quaternion q = ThighTurn(hip, knee, modelHip, modelHoop, rot), inv = Quaternion.Inverse(q);
+            var pts = new List<System.Numerics.Vector2>();
             foreach (var p in w)
             {
-                Vector3 q = p - at;
-                if (Mathf.Abs(Vector3.Dot(q, d)) > 0.012f) continue;
-                if ((p - at).sqrMagnitude > (p - oat).sqrMagnitude || q.sqrMagnitude > 0.04f) continue;   // the other leg's skin
-                float x = Vector3.Dot(q, a), z = Vector3.Dot(q, b);
-                a0 = Mathf.Min(a0, x); a1 = Mathf.Max(a1, x); b0 = Mathf.Min(b0, z); b1 = Mathf.Max(b1, z);
+                if ((p - at).sqrMagnitude > (p - oat).sqrMagnitude || (p - at).sqrMagnitude > len * len * 0.36f) continue;   // the other leg's skin, or far away
+                Vector3 l = h.ToFrame * (inv * (p - at));
+                if (Mathf.Abs(l.y) <= half) pts.Add(new System.Numerics.Vector2(l.x, l.z));
             }
-            if (a1 < a0) return (Vector3.one * sy, Vector3.zero);
-            return (new Vector3((a1 - a0) / 2 * Room / HoopInX, sy, (b1 - b0) / 2 * Room / HoopInZ), new Vector3((a0 + a1) / 2, 0, (b0 + b1) / 2));
+            var shape = BeltShape.From(pts, 0.002f);
+            if (shape == null) return;
+            h.Shape = shape; h.Tall = sy;
+            var v = new Vector3[h.Rest.Length];
+            for (int i = 0; i < v.Length; i++) v[i] = h.Local(h.Rest[i]);
+            h.Mesh.vertices = v;
+            h.Mesh.RecalculateNormals();
+            h.Mesh.RecalculateBounds();
         }
+
+        private static Quaternion ThighTurn(Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot) =>
+            Quaternion.FromToRotation(rot * (modelHoop - modelHip).normalized, (knee - hip).normalized) * rot;
 
         // --- every frame ---------------------------------------------------------------------------------------------------------
 
@@ -300,35 +346,32 @@ namespace Harness
             Vector3 hl = B(HumanBodyBones.LeftUpperLeg).position, hr = B(HumanBodyBones.RightUpperLeg).position, mid = (hl + hr) * 0.5f;
             Vector3 kl = B(HumanBodyBones.LeftLowerLeg).position, kr = B(HumanBodyBones.RightLowerLeg).position;
             // measured twice just after it goes on (bones settle after a load), then again only when her size changes
-            if (Time.time >= _nextFit && (_fits < 2 || Mathf.Abs((kl - hl).magnitude - _thighLength) > 0.02f * _thighLength)) { Fit(anim); _fits++; _nextFit = Time.time + 2f; }
+            if (Time.time >= _nextFit && (_fits < 2 || Mathf.Abs((kl - hl).magnitude - _thighLength) > 0.02f * _thighLength)) { _needSurvey = true; _nextFit = Time.time + 2f; }
+            if (_shape == null) return;
             Vector3 right = (hr - hl).normalized, up = Vector3.ProjectOnPlane(B(HumanBodyBones.Spine).position - mid, right).normalized;
             Vector3 fwd = Vector3.Cross(right, up);
             Quaternion rot = Quaternion.LookRotation(fwd, up);
-            Vector3 S = _scale * Plugin.ScaleTrim.Value;
-            Vector3 waist = mid + right * _waist.x + up * _waist.y + fwd * _waist.z;
-            _belt.SetPositionAndRotation(waist - rot * new Vector3(0, BeltY * S.y, 0), rot);
-            _belt.localScale = S;
+            _belt.SetPositionAndRotation(mid + rot * new Vector3(0f, _waist.y, 0f), rot);
             float ls = _lowerScale * Plugin.ScaleTrim.Value;
-            Vector3 crotch = mid + up * _crotch.y + fwd * _crotch.z;
-            _lower.SetPositionAndRotation(crotch - rot * (Crotch * ls), rot);
-            _lower.localScale = Vector3.one * ls;
-            PlaceThigh(_thighL, hl, kl, _hipL, _hoopL, rot, right, _hoopScaleL, _hoopOffL);
-            PlaceThigh(_thighR, hr, kr, _hipR, _hoopR, rot, right, _hoopScaleR, _hoopOffR);
+            PlaceGuides(anim, rot, ls);
+            PlaceThigh(_thighL, hl, kl, _hipL, _hoopL, rot);
+            PlaceThigh(_thighR, hr, kr, _hipR, _hoopR, rot);
 
             // Beta's anchor_L and eyelet_L hang on her right thigh, anchor_R and eyelet_R on her left
-            Vector3 barAL = Bar("anchor_L", _thighR, _hoopR), barAR = Bar("anchor_R", _thighL, _hoopL), barEL = Bar("eyelet_L", _thighR, _hoopR), barER = Bar("eyelet_R", _thighL, _hoopL);
-            Vector3 eyeF0 = _lower.TransformPoint(Sock("SOCKET_cord_front")), eyeR0 = _lower.TransformPoint(Sock("SOCKET_cord_rear"));
+            Vector3 barAL = Bar("anchor_L", _thighR, _hoopFitR, _hoopR), barAR = Bar("anchor_R", _thighL, _hoopFitL, _hoopL), barEL = Bar("eyelet_L", _thighR, _hoopFitR, _hoopR), barER = Bar("eyelet_R", _thighL, _hoopFitL, _hoopL);
+            Vector3 eyeF0 = _guideF.TransformPoint(Sock("SOCKET_cord_front") - _cF), eyeR0 = _guideR.TransformPoint(Sock("SOCKET_cord_rear") - _cR);
             float dt = Time.deltaTime, thigh = (kl - hl).magnitude;
             // the same cords with her legs straight down, which is where they go slack
-            Vector3 rAL = RestBar("anchor_L", hr, kr, _hipR, _hoopR, rot, up, right, _hoopScaleR, _hoopOffR), rAR = RestBar("anchor_R", hl, kl, _hipL, _hoopL, rot, up, right, _hoopScaleL, _hoopOffL);
-            Vector3 rEL = RestBar("eyelet_L", hr, kr, _hipR, _hoopR, rot, up, right, _hoopScaleR, _hoopOffR), rER = RestBar("eyelet_R", hl, kl, _hipL, _hoopL, rot, up, right, _hoopScaleL, _hoopOffL);
+            Vector3 rAL = RestBar("anchor_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up), rAR = RestBar("anchor_R", hl, kl, _hipL, _hoopL, _hoopFitL, rot, up);
+            Vector3 rEL = RestBar("eyelet_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up), rER = RestBar("eyelet_R", hl, kl, _hipL, _hoopL, _hoopFitL, rot, up);
             float cordF = (barAL - barER).magnitude + (barER - eyeF0).magnitude, cordR = (barAR - barEL).magnitude + (barEL - eyeR0).magnitude;
             float restF = (rAL - rER).magnitude + (rER - eyeF0).magnitude, restR = (rAR - rEL).magnitude + (rEL - eyeR0).magnitude;
             _driveF.Update(cordF, restF, thigh, dt);
             _driveR.Update(cordR, restR, thigh, dt);
-            _pistonF.localPosition = -_axisF * (_driveF.Stroke * StrokeMetres);
-            _pistonR.localPosition = -_axisR * (_driveR.Stroke * StrokeMetres);
-            Vector3 eyeF = _pistonF.TransformPoint(Sock("SOCKET_cord_front")), eyeR = _pistonR.TransformPoint(Sock("SOCKET_cord_rear"));
+            float force = Plugin.ForceStroke.Value;
+            _pistonF.localPosition = -_axisF * ((force >= 0f ? force : _driveF.Stroke) * StrokeMetres);
+            _pistonR.localPosition = -_axisR * ((force >= 0f ? force : _driveR.Stroke) * StrokeMetres);
+            Vector3 eyeF = _pistonF.TransformPoint(Sock("SOCKET_cord_front") - _cF), eyeR = _pistonR.TransformPoint(Sock("SOCKET_cord_rear") - _cR);
 
             Vector3 seatAL = Swing("anchor_L", "SOCKET_anchor_L", barAL, (barER - barAL).normalized, _thighR, ls);
             Vector3 seatAR = Swing("anchor_R", "SOCKET_anchor_R", barAR, (barEL - barAR).normalized, _thighL, ls);
@@ -337,30 +380,53 @@ namespace Harness
             Line(_cords[0], seatAL, seatER, ls); Line(_cords[1], seatER, eyeF, ls); Line(_cords[2], seatAR, seatEL, ls); Line(_cords[3], seatEL, eyeR, ls);
             End("end_front_thigh", seatAL, seatER, "SOCKET_anchor_L", "SOCKET_eyelet_R", _thighR, ls);
             End("end_rear_thigh", seatAR, seatEL, "SOCKET_anchor_R", "SOCKET_eyelet_L", _thighL, ls);
-            End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _lower, ls);
-            End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _lower, ls);
+            End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ls);
+            End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ls);
             foreach (var st in _stretches)
             {
-                Vector3 a = st.From.TransformPoint(st.Start - st.FromOrigin), b = st.To.TransformPoint(st.End - st.ToOrigin), d = b - a;
+                Vector3 a = Point(st.From, st.Start, st.FromOrigin), b = Point(st.To, st.End, st.ToOrigin), d = b - a;
                 st.T.SetPositionAndRotation(a, Quaternion.LookRotation(d, rot * st.Hint));
                 st.T.localScale = new Vector3(ls, ls, d.magnitude / st.Length);
             }
-            Status = "scale " + S + " stroke " + _driveF.Stroke.ToString("0.00") + " " + _driveR.Stroke.ToString("0.00") + " cord " + cordF.ToString("0.000") + " of " + restF.ToString("0.000") + ", " + cordR.ToString("0.000") + " of " + restR.ToString("0.000");
+            Status = "size " + ls.ToString("0.00") + " stroke " + _driveF.Stroke.ToString("0.00") + " " + _driveR.Stroke.ToString("0.00") + " cord " + cordF.ToString("0.000") + " of " + restF.ToString("0.000") + ", " + cordR.ToString("0.000") + " of " + restR.ToString("0.000");
         }
 
-        private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot, Vector3 up, Vector3 right, Vector3 scale, Vector3 off)
+        private Vector3 Point(Transform node, Vector3 model, Vector3 origin) =>
+            node == _belt ? _belt.TransformPoint(U(_shape.Warp(new NVector3(model.x, model.y, model.z), BeltInX, BeltInZ, BeltY, _beltTall, _beltThick)))
+            : node == _thighL ? node.TransformPoint(_hoopFitL.Local(model - origin)) : node == _thighR ? node.TransformPoint(_hoopFitR.Local(model - origin)) : node.TransformPoint(model - origin);
+
+        /// <summary>
+        /// The pistons line up with the game's own anchors in her pelvis, with each guide band just below its anchor, as in the worn image. The front
+        /// guide takes the game's direction. The rear guide hangs from it by the hinge, at the model's spacing, aimed at the rear anchor.
+        /// </summary>
+        private void PlaceGuides(Animator anim, Quaternion rot, float ls)
+        {
+            if (_anchorF == null)
+            {
+                Transform m = anim.transform.Find("Armature/Hips/PlayerBoneScaleAdjuster/Manko"), n = anim.transform.Find("Armature/Hips/PlayerBoneScaleAdjuster/Anal");
+                if (m == null || n == null) { Plugin.Logger.LogWarning("anchor bones not found"); return; }
+                _anchorF = m.Find("PussyDildoTarget"); _anchorR = n.Find("RotateTarget/AnalDildoTarget"); _axisObjF = m.Find("RotateTarget/piston_machine_dildo (1)");
+            }
+            Vector3 tf = _anchorF.position, tr = _anchorR.position, uF = -_axisObjF.forward;
+            float reach = Plugin.GuideDrop.Value * ls;
+            Vector3 cF = tf - uF * reach, want = tr - uF * reach;
+            Vector3 cR = cF + (want - cF).normalized * (_guideGap * ls), uR = (tr - cR).normalized;
+            _guideF.SetPositionAndRotation(cF, Quaternion.FromToRotation(rot * _axisF, uF) * rot);
+            _guideR.SetPositionAndRotation(cR, Quaternion.FromToRotation(rot * _axisR, uR) * rot);
+            _guideF.localScale = _guideR.localScale = Vector3.one * ls;
+        }
+
+        private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)
         {
             float len = (knee - hip).magnitude;
             Quaternion q = Quaternion.FromToRotation(rot * (modelHoop - modelHip).normalized, -up) * rot;
-            Vector3 a = Vector3.ProjectOnPlane(right, up).normalized, b = Vector3.Cross(a, -up);
-            Vector3 centre = hip - up * (len * Plugin.HoopAlongThigh.Value) + a * off.x + b * off.z;
-            return centre + q * Vector3.Scale(scale, U(_file.Groups.Find(x => x.Name == "ring_" + key).Pivot) - modelHoop);
+            return hip - up * (len * Plugin.HoopAlongThigh.Value) + q * h.Local(U(_file.Groups.Find(x => x.Name == "ring_" + key).Pivot) - modelHoop);
         }
 
-        private Vector3 Bar(string key, Transform node, Vector3 hoop)
+        private Vector3 Bar(string key, Transform node, Hoop h, Vector3 hoop)
         {
             HGroup g = _file.Groups.Find(x => x.Name == "ring_" + key);
-            return node.TransformPoint(U(g.Pivot) - hoop);
+            return node.TransformPoint(h.Local(U(g.Pivot) - hoop));
         }
 
         /// <summary>Swings a ring about its bar to face its pull. Returns the point where the cord bears on it.</summary>
@@ -383,13 +449,9 @@ namespace Harness
             t.localScale = Vector3.one * scale;
         }
 
-        private void PlaceThigh(Transform node, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot, Vector3 right, Vector3 scale, Vector3 off)
+        private void PlaceThigh(Transform node, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot)
         {
-            Vector3 axis = knee - hip, da = axis.normalized, dm = rot * (modelHoop - modelHip).normalized;
-            Quaternion q = Quaternion.FromToRotation(dm, da) * rot;
-            Vector3 a = Vector3.ProjectOnPlane(right, da).normalized, b = Vector3.Cross(a, da);
-            node.SetPositionAndRotation(hip + axis * Plugin.HoopAlongThigh.Value + a * off.x + b * off.z, q);
-            node.localScale = scale;
+            node.SetPositionAndRotation(hip + (knee - hip) * Plugin.HoopAlongThigh.Value, ThighTurn(hip, knee, modelHip, modelHoop, rot));
         }
 
         private static void Line(Transform t, Vector3 a, Vector3 b, float s)
@@ -404,7 +466,7 @@ namespace Harness
             if (_top != null) UnityEngine.Object.Destroy(_top);
             _top = null;
             foreach (var o in _owned) if (o != null) UnityEngine.Object.Destroy(o);
-            _owned.Clear(); _own.Clear(); _stretches.Clear();
+            _owned.Clear(); _own.Clear(); _stretches.Clear(); _anchorF = null; _shape = null; _hoopFitL.Shape = null; _hoopFitR.Shape = null;
             _visible = false;
         }
     }

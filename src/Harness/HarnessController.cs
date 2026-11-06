@@ -78,6 +78,18 @@ namespace Harness
             Status = Machine.State + (_rig == null ? "" : ", " + _rig.Status);
         }
 
+        // Measuring needs her arms out of the way, so the rig moves them for one moment here, before skinning; nothing of that is drawn.
+        private void LateUpdate()
+        {
+            try
+            {
+                if (!Machine.Worn || _rig == null || !_rig.Built || PlayerController.Instance == null) return;
+                var anim = PlayerController.Instance.Pca == null ? null : PlayerController.Instance.Pca.Animator;
+                if (anim != null) _rig.Survey(anim);
+            }
+            catch (Exception e) { Fail("LateUpdate", e); }
+        }
+
         private void OnPreCull(Camera cam)
         {
             try
@@ -137,6 +149,8 @@ namespace Harness
         [HideFromIl2Cpp] internal void OnNewGame() => Machine.Reset();
 
         public static string PutOnNow() => Instance == null ? "no controller" : Instance.PutOn() ?? Instance.Machine.State.ToString();
+
+        public static string Stroke(string v) { Plugin.ForceStroke.Value = float.Parse(v, System.Globalization.CultureInfo.InvariantCulture); return "stroke " + v; }
 
         public static string TakeOffNow() { Instance?.TakeOff(); return "off"; }
 
