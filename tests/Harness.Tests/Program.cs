@@ -17,7 +17,7 @@ namespace Harness.Tests
         {
             string file = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Harness", "assets", "harness.hrn"));
             var m = HarnessFile.Read(System.IO.File.OpenRead(file));
-            Check(m.Groups.Count == 39, "39 moving groups");
+            Check(m.Groups.Count == 37, "37 moving groups");
             Check(m.TriangleCount() > 50000, "whole model present");
             Check(m.Sockets.ContainsKey("SOCKET_cord_front") && m.Sockets.ContainsKey("BODY_hoop_R"), "sockets present");
             Check(m.Sockets["BODY_hip_R"].Position.X < 0, "Beta's right is her left: -X in Unity");

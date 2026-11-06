@@ -97,7 +97,6 @@ namespace Harness
             var ends = StretchEnds();
             foreach (var g in _file.Groups)
             {
-                if (g.Name.StartsWith("chape_")) continue;   // drawn each frame
                 if (g.Name.StartsWith("dring_")) { AddGroup(g, g.Name.EndsWith("_R") ? _ringR : _ringL, U(g.Pivot), Quaternion.identity, mats, layer); continue; }
                 if (g.Name.StartsWith("rigid_"))
                 {
@@ -142,7 +141,6 @@ namespace Harness
                 else _own[g.Name] = AddGroup(g, _top.transform, U(g.Pivot), Quaternion.identity, mats, layer);
             }
             SetupHoop(_hoopFitL, _thighL, _hoopFitR); SetupHoop(_hoopFitR, _thighR, _hoopFitL);
-            _tabR = new Tab(mats[_file.Materials.FindIndex(m => m.Name == "brown")], layer, _top.transform, _owned); _tabL = new Tab(mats[_file.Materials.FindIndex(m => m.Name == "brown")], layer, _top.transform, _owned);
             MakeWire(mats[_file.Materials.FindIndex(m => m.Name == "pink")], layer);
             Mesh tube = Tube(0.0014f, 6);
             _owned.Add(tube);
@@ -465,6 +463,7 @@ namespace Harness
                 hg.Append(' ').Append(h == _hoopFitL ? "left" : "right").Append(" min ").Append((lo * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)).Append(" mean ").Append((sum / Mathf.Max(n, 1) * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)).Append(" through ").Append(under).Append('/').Append(n);
             }
             Plugin.Logger.LogInfo(hg.ToString());
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] ringcheck: " + RingCheck(_ringR, "R", w, tris, bl, bt) + " | " + RingCheck(_ringL, "L", w, tris, bl, bt));
             Plugin.Logger.LogInfo("[SFM-ACCEPT] chain: " + ChainReport(_linkF, 1f, w, tris, rot) + " | " + ChainReport(_linkR, -1f, w, tris, rot));
             Plugin.Logger.LogInfo("[SFM-ACCEPT] parts: stroke " + _driveF.Stroke.ToString("0.00") + " " + PartReport("front", _guideF, _axisF, w, tris, rot) + " " + PartReport("rear", _guideR, _axisR, w, tris, rot));
             if (_markers != null) { UnityEngine.Object.Destroy(_markers); _markers = null; }
@@ -714,6 +713,32 @@ namespace Harness
             return sb.ToString();
         }
 
+        /// <summary>The ring and the top of the V strap against her skin and the belt: how deep any of it sits, in mm, measured on the real meshes. Above the belt's lower edge the slider is meant to meet the ring, so only skin counts there.</summary>
+        private string RingCheck(Transform ring, string side, Vector3[] w, int[] tris, Vector3[] beltWorld, int[] beltTris)
+        {
+            Quaternion rot = _belt.rotation; Vector3 pos = _belt.position, up = rot * Vector3.up, right = rot * Vector3.right, fwd = rot * Vector3.forward;
+            var pts = new List<Vector3>();
+            foreach (var mf in ring.GetComponentsInChildren<MeshFilter>()) foreach (var v in mf.sharedMesh.vertices) pts.Add(mf.transform.TransformPoint(v));
+            var st = _stretches.Find(x => x.Name == "vstrap_" + side);
+            var sv = st.Mesh.vertices;
+            for (int i = 0; i < sv.Length; i++) if (sv[i].z < st.Length * 0.25f) pts.Add(st.T.TransformPoint(sv[i]));
+            float skinDeep = 0f, beltDeep = 0f, lo = 9f, hi = -9f;
+            foreach (var p in pts) { float h = Vector3.Dot(p - pos, up); lo = Mathf.Min(lo, h); hi = Mathf.Max(hi, h); }
+            for (float h = lo; h <= hi; h += 0.004f)
+            {
+                Vector3 o = pos + up * h;
+                float[] skin = Bins(Cut(w, tris, o, up, right, fwd, _arm), true), belt = Bins(Cut(beltWorld, beltTris, o, up, right, fwd), true);
+                foreach (var p in pts)
+                {
+                    if (Mathf.Abs(Vector3.Dot(p - o, up)) > 0.002f) continue;
+                    float dx = Vector3.Dot(p - pos, right) - _band.CentreX, dz = Vector3.Dot(p - pos, fwd) - _band.CentreZ, r = Mathf.Sqrt(dx * dx + dz * dz); int b = BeltBand.Bin(Mathf.Atan2(dx, dz));
+                    skinDeep = Mathf.Max(skinDeep, skin[b] - r);
+                    if (h < -0.0272f * _beltTall) beltDeep = Mathf.Max(beltDeep, belt[b] - r);
+                }
+            }
+            return side + " skin " + (skinDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " belt " + (beltDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         /// <summary>Tiny bright cubes on the outline measured: if they sit on her skin in a screenshot, the data matches what is drawn.</summary>
         private GameObject MarkerObject(List<Vector3> pts)
         {
@@ -879,7 +904,6 @@ namespace Harness
             End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ps);
             End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ps);
             SwingRing(_ringR, "R", _ringLiftR, rot, ls); SwingRing(_ringL, "L", _ringLiftL, rot, ls);
-            DrawTab(_tabR, _ringR, "R", ls); DrawTab(_tabL, _ringL, "L", ls);
             foreach (var st in _stretches)
             {
                 Vector3 a = Point(st.From, st.Start, st.FromOrigin), b = Point(st.To, st.End, st.ToOrigin), d = b - a;
@@ -1117,73 +1141,13 @@ namespace Harness
             return lowest > 8f ? -9f : 0.015f * ps + 0.001f - lowest;
         }
 
-        /// <summary>
-        /// A leather tab as a strip: from its rivets down the belt, out over the trim, round the ring's top bar and back. It is drawn each frame, so it leans
-        /// and draws out towards wherever the ring pulls it.
-        /// </summary>
-        private sealed class Tab
-        {
-            public const int Ctrl = 11, Per = 3, Rings = (Ctrl - 1) * Per + 1;
-            public readonly Mesh Mesh; public readonly Vector3[] V = new Vector3[Rings * 4];
-            public Tab(Material brown, int layer, Transform parent, List<UnityEngine.Object> owned)
-            {
-                var t = new int[(Rings - 1) * 4 * 6];
-                for (int r = 0, o = 0; r + 1 < Rings; r++)
-                    for (int i = 0; i < 4; i++)
-                    {
-                        int a = r * 4 + i, b = r * 4 + (i + 1) % 4, c = a + 4, d = b + 4;
-                        t[o++] = a; t[o++] = b; t[o++] = c; t[o++] = b; t[o++] = d; t[o++] = c;
-                    }
-                Mesh = new Mesh { name = Tag + "Tab", vertices = V, triangles = t };
-                owned.Add(Mesh);
-                var go = new GameObject("tab"); go.layer = layer; go.transform.SetParent(parent, false);
-                go.AddComponent<MeshFilter>().sharedMesh = Mesh;
-                var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = brown; mr.allowOcclusionWhenDynamic = false;
-            }
-        }
-
-        private Tab _tabR, _tabL;
-
-        private void DrawTab(Tab tab, Transform ring, string side, float ls)
-        {
-            Vector3 top = Point(_belt, Sock("SOCKET_chape_top_" + side), Vector3.zero), mid = Point(_belt, Sock("SOCKET_chape_mid_" + side), Vector3.zero), p = ring.position;
-            Vector3 pull = (ring.rotation * (Sock("SOCKET_vstrap_top_" + side) - Sock("SOCKET_chape_" + side))).normalized, bar = (ring.rotation * (Sock("SOCKET_chape_x_" + side) - Sock("SOCKET_chape_" + side))).normalized;
-            Vector3 centre = _belt.position + _belt.rotation * new Vector3(_band.CentreX, 0f, _band.CentreZ), beltUp = _belt.rotation * Vector3.up;
-            Vector3 outward = Vector3.ProjectOnPlane(p - centre, beltUp).normalized, face = Vector3.Cross(bar, pull).normalized;
-            if (Vector3.Dot(face, outward) < 0f) face = -face;
-            Vector3 rivet = Point(_belt, Sock("SOCKET_chape_rivet_" + side), Vector3.zero);
-            top += outward * (0.0045f * ls); rivet += outward * (0.0042f * ls); mid += outward * (0.0035f * ls);   // on top of the belt's strap, under the rivets
-            float thick = 0.0018f * ls, rho = 0.0016f * ls + thick / 2 + 0.0002f, half = 0.0052f * ls, back = thick * 1.3f;
-            // the middle of the tab leans towards the pull; the rivets hold its top end
-            Vector3 lean = Vector3.ProjectOnPlane(pull, beltUp) * ((mid - p).magnitude * 0.3f);
-            var c = new NVector3[Tab.Ctrl];
-            void Set(int i, Vector3 v) => c[i] = new NVector3(v.x, v.y, v.z);
-            // from the top to the rivets it stays flat on the belt; only the free part below them moves
-            Vector3 free = mid + Vector3.ProjectOnPlane(lean, outward);
-            Set(0, top); Set(1, rivet); Set(2, free);
-            for (int i = 0; i < 5; i++) { float a = i * Mathf.PI / 4f; Set(3 + i, p + (face * Mathf.Cos(a) + pull * Mathf.Sin(a)) * rho); }
-            Set(8, free - outward * back); Set(9, rivet - outward * back); Set(10, top - outward * back);
-            var line = WirePath.Smooth(c, Tab.Per);
-            Vector3 across = Vector3.Cross(top - rivet, outward).normalized; if (Vector3.Dot(across, bar) < 0f) across = -across;
-            for (int r = 0; r < line.Length; r++)
-            {
-                Vector3 q = U(line[r]), d = (U(line[Mathf.Min(r + 1, line.Length - 1)]) - U(line[Mathf.Max(r - 1, 0)])).normalized;
-                float f = Mathf.Clamp01((Mathf.Min(r, line.Length - 1 - r) - Tab.Per) / (float)(Tab.Per * 2));
-                Vector3 wide = Vector3.Lerp(across, bar, f).normalized, n = Vector3.Cross(d, wide).normalized;
-                wide = Vector3.Cross(n, d).normalized;
-                tab.V[r * 4] = q + wide * half + n * (thick / 2); tab.V[r * 4 + 1] = q - wide * half + n * (thick / 2);
-                tab.V[r * 4 + 2] = q - wide * half - n * (thick / 2); tab.V[r * 4 + 3] = q + wide * half - n * (thick / 2);
-            }
-            tab.Mesh.vertices = tab.V; tab.Mesh.RecalculateNormals(); tab.Mesh.RecalculateBounds();
-        }
-
-        /// <summary>A D-ring hanging from its chape on the belt, pulled towards the trapezoid by the V strap, and held off her skin where the hip widens under it.</summary>
+        /// <summary>The small ring hanging from the slider on the belt, pulled towards the trapezoid by the V strap, and held off her skin where the hip widens under it.</summary>
         private void SwingRing(Transform ring, string side, float lift, Quaternion rot, float ls)
         {
             Vector3 chape = Sock("SOCKET_chape_" + side), model = Sock("SOCKET_vstrap_top_" + side) - chape;
             Vector3 p = Point(_belt, chape, Vector3.zero), pull = _linkF[3].TransformPoint(Sock("SOCKET_vstrap_bottom_" + side) - Sock("SOCKET_link_f3"));
             Vector3 centre = _belt.position + _belt.rotation * new Vector3(_band.CentreX, 0f, _band.CentreZ), up = _belt.rotation * Vector3.up;
-            Vector3 outward = Vector3.ProjectOnPlane(p - centre, up).normalized, bar = p + (pull - p).normalized * (model.magnitude * ls) + outward * lift;
+            Vector3 outward = Vector3.ProjectOnPlane(p - centre, up).normalized, bar = p + (pull - p).normalized * (model.magnitude * ls) + outward * (lift + 0.0055f * ls);   // the ring tips out over the belt's lower trim
             ring.SetPositionAndRotation(p, Quaternion.FromToRotation(rot * model.normalized, (bar - p).normalized) * rot);
             ring.localScale = Vector3.one * ls;
         }
