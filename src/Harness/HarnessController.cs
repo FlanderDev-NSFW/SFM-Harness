@@ -171,6 +171,8 @@ namespace Harness
 
         public static string GapWatch(string seconds) { if (Instance?._rig == null) return "no rig"; Instance._rig.WatchUntil = Time.time + float.Parse(seconds, System.Globalization.CultureInfo.InvariantCulture); return "watching"; }
 
+        public static string ProbeNow() { HarnessRig.Probe = true; return "probe"; }
+
         public static string TakeOffNow() { Instance?.TakeOff(); return "off"; }
 
         /// <summary>Slices her body at many heights and logs the sizes: what the fit has to work from.</summary>

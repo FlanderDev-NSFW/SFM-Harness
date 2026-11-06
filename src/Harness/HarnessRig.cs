@@ -37,14 +37,14 @@ namespace Harness
 
         private readonly HarnessFile _file;
         private GameObject _top;
-        private Transform _belt, _guideF, _guideR, _thighL, _thighR, _pistonF, _pistonR, _anchorF, _anchorR, _axisObjF;
+        private Transform _belt, _guideF, _guideR, _thighL, _thighR, _pistonF, _pistonR, _anchorF, _anchorR, _axisObjF, _axisObjR, _chain;
         private Mesh _beltMesh; private Vector3[] _beltRest; private BeltBand _band; private float _beltTall = 1f, _beltThick = 1f; private float[] _modelInner;
         private bool[] _arm; private Vector3 _lh, _ls; private Quaternion _qh, _qs; private GameObject _markers; private Material _markerMat;
-        public bool WantGap; public static bool ShowMarkers; public float WatchUntil; private float _nextWatch;
+        public bool WantGap; public static bool ShowMarkers; public static bool Probe; public float WatchUntil; private float _nextWatch;
         public void Hide(bool off) { if (_top != null) foreach (var r in _top.GetComponentsInChildren<MeshRenderer>(true)) r.enabled = !off; }
         private const float BeltHalf = 0.039f, Clear = 0.002f, MaxLift = 0.012f;
         private float _beltHalf, _nextSettle; private float[] _lifted; private float[][] _beltBins; private int[] _waistTris, _beltTris; private int _settled; private bool _wantBow; public float SettleMs, LookMs; private int _looks;
-        private Vector3 _cF, _cR; private float _guideGap; private bool _needMeasure = true;
+        private Vector3 _cF, _cR, _chainAt; private bool _needMeasure = true;
         private readonly Dictionary<string, Transform> _own = new Dictionary<string, Transform>();
         private readonly List<Stretch> _stretches = new List<Stretch>();
         private readonly Transform[] _cords = new Transform[4];
@@ -73,9 +73,9 @@ namespace Harness
             // Beta's R side is her left
             _hipL = Sock("BODY_hip_R"); _hipR = Sock("BODY_hip_L"); _hoopL = Sock("BODY_hoop_R"); _hoopR = Sock("BODY_hoop_L");
             _axisF = (Sock("AXIS_front") - Sock("SOCKET_guide_front")).normalized; _axisR = (Sock("AXIS_rear") - Sock("SOCKET_guide_rear")).normalized;
-            _cF = Sock("SOCKET_guide_front"); _cR = Sock("SOCKET_guide_rear"); _guideGap = (_cF - _cR).magnitude;
+            _cF = Sock("SOCKET_guide_front"); _cR = Sock("SOCKET_guide_rear"); _chainAt = Sock("SOCKET_chain_pivot");
             _belt = Node("Belt", _top.transform); _guideF = Node("GuideFront", _top.transform); _guideR = Node("GuideRear", _top.transform); _thighL = Node("ThighL", _top.transform); _thighR = Node("ThighR", _top.transform);
-            _pistonF = Node("PistonFront", _guideF); _pistonR = Node("PistonRear", _guideR);
+            _pistonF = Node("PistonFront", _guideF); _pistonR = Node("PistonRear", _guideR); _chain = Node("RearChain", _top.transform);
             var mats = new Material[_file.Materials.Count];
             Material source = FindToon();
             for (int i = 0; i < mats.Length; i++) mats[i] = MakeMaterial(source, _file.Materials[i]);
@@ -85,8 +85,8 @@ namespace Harness
                 string node = GroupMap.NodeOf(g.Name);
                 if (node != GroupMap.Own)
                 {
-                    Transform parent = node switch { GroupMap.LeftThigh => _thighL, GroupMap.RightThigh => _thighR, GroupMap.PistonFront => _pistonF, GroupMap.PistonRear => _pistonR, GroupMap.Belt => _belt, GroupMap.GuideFront => _guideF, _ => _guideR };
-                    Vector3 origin = node == GroupMap.LeftThigh ? _hoopL : node == GroupMap.RightThigh ? _hoopR : node == GroupMap.GuideFront || node == GroupMap.PistonFront ? _cF : node == GroupMap.GuideRear || node == GroupMap.PistonRear ? _cR : Vector3.zero;
+                    Transform parent = node switch { GroupMap.LeftThigh => _thighL, GroupMap.RightThigh => _thighR, GroupMap.PistonFront => _pistonF, GroupMap.PistonRear => _pistonR, GroupMap.Belt => _belt, GroupMap.GuideFront => _guideF, GroupMap.RearChain => _chain, _ => _guideR };
+                    Vector3 origin = node == GroupMap.LeftThigh ? _hoopL : node == GroupMap.RightThigh ? _hoopR : node == GroupMap.GuideFront || node == GroupMap.PistonFront ? _cF : node == GroupMap.GuideRear || node == GroupMap.PistonRear ? _cR : node == GroupMap.RearChain ? _chainAt : Vector3.zero;
                     var t = AddGroup(g, parent, origin, Quaternion.identity, mats, layer);
                     if (node == GroupMap.Belt)
                     {
@@ -134,7 +134,8 @@ namespace Harness
                 new Stretch { Start = Sock(a), End = Sock(b), Hint = Vector3.forward, From = from, To = to, FromOrigin = fromOrigin, ToOrigin = toOrigin };
             d["vstrap_R"] = S("SOCKET_vstrap_top_R", _belt, Vector3.zero, "SOCKET_vstrap_bottom_R", _guideF, _cF);
             d["vstrap_L"] = S("SOCKET_vstrap_top_L", _belt, Vector3.zero, "SOCKET_vstrap_bottom_L", _guideF, _cF);
-            d["rear_strap"] = S("SOCKET_rear_strap_top", _belt, Vector3.zero, "SOCKET_rear_strap_bottom", _guideR, _cR);
+            d["rear_strap"] = S("SOCKET_rear_strap_top", _belt, Vector3.zero, "SOCKET_rear_strap_bottom", _chain, _chainAt);
+            d["hinge_link"] = S("SOCKET_hinge_front", _guideF, _cF, "SOCKET_hinge_rear", _guideR, _cR); d["hinge_link"].Hint = Vector3.up;
             d["wire_up"] = S("WIRE_tip", _guideF, _cF, "WIRE_mid", _belt, Vector3.zero);
             d["wire_down"] = S("WIRE_mid", _belt, Vector3.zero, "WIRE_end", _thighL, _hoopL);
             foreach (string tag in new[] { "front", "rear" })
@@ -702,7 +703,7 @@ namespace Harness
             {
                 Vector3 a = Point(st.From, st.Start, st.FromOrigin), b = Point(st.To, st.End, st.ToOrigin), d = b - a;
                 st.T.SetPositionAndRotation(a, Quaternion.LookRotation(d, rot * st.Hint));
-                float sw = st.Name.StartsWith("spring_") ? ps : ls;
+                float sw = st.Name.StartsWith("spring_") || st.Name == "hinge_link" ? ps : ls;
                 st.T.localScale = new Vector3(sw, sw, d.magnitude / st.Length);
             }
             if (_wantBow) { _wantBow = false; Bow(anim); }
@@ -726,15 +727,25 @@ namespace Harness
             {
                 Transform m = anim.transform.Find("Armature/Hips/PlayerBoneScaleAdjuster/Manko"), n = anim.transform.Find("Armature/Hips/PlayerBoneScaleAdjuster/Anal");
                 if (m == null || n == null) { Plugin.Logger.LogWarning("anchor bones not found"); return; }
-                _anchorF = m.Find("PussyDildoTarget"); _anchorR = n.Find("RotateTarget/AnalDildoTarget"); _axisObjF = m.Find("RotateTarget/piston_machine_dildo (1)");
+                _anchorF = m.Find("PussyDildoTarget"); _anchorR = n.Find("RotateTarget/AnalDildoTarget"); _axisObjF = m.Find("RotateTarget/piston_machine_dildo (1)"); _axisObjR = n.Find("RotateTarget/Parent/piston_machine_dildo");
             }
-            Vector3 tf = _anchorF.position, tr = _anchorR.position, uF = -_axisObjF.forward;
+            // each guide on its own axis, as the game aims its own machine; the joints and the shared link take up the difference
+            Vector3 tf = _anchorF.position, tr = _anchorR.position, uF = -_axisObjF.forward, uR = -_axisObjR.forward;
             float reach = Plugin.GuideDrop.Value * ls;
-            Vector3 cF = tf - uF * reach, want = tr - uF * reach;
-            Vector3 cR = cF + (want - cF).normalized * (_guideGap * ls), uR = (tr - cR).normalized;
+            Vector3 cF = tf - uF * reach, cR = tr - uR * reach;
             _guideF.SetPositionAndRotation(cF, Quaternion.FromToRotation(rot * _axisF, uF) * rot);
             _guideR.SetPositionAndRotation(cR, Quaternion.FromToRotation(rot * _axisR, uR) * rot);
-            _guideF.localScale = _guideR.localScale = Vector3.one * ls;
+            _guideF.localScale = _guideR.localScale = _chain.localScale = Vector3.one * ls;
+            // the rear chain hangs from its lug towards the rear strap
+            Vector3 bar = _guideR.TransformPoint(_chainAt - _cR), top = Point(_belt, Sock("SOCKET_rear_strap_top"), Vector3.zero), rest = (Sock("SOCKET_rear_strap_bottom") - _chainAt).normalized;
+            _chain.SetPositionAndRotation(bar, Quaternion.FromToRotation(rot * rest, (top - bar).normalized) * rot);
+            if (Probe)
+            {
+                Probe = false;
+                float link = (_guideR.TransformPoint(Sock("SOCKET_hinge_rear") - _cR) - _guideF.TransformPoint(Sock("SOCKET_hinge_front") - _cF)).magnitude, model = (Sock("SOCKET_hinge_rear") - Sock("SOCKET_hinge_front")).magnitude * ls;
+                Vector3 tipF = cF + uF * (PistonTip * ls), tipR = cR + uR * (PistonTip * ls);
+                Plugin.Logger.LogInfo("[SFM-ACCEPT] joints: link " + (link * 100).ToString("0.0") + " cm, stretched " + (link / model).ToString("0.00") + "; guides " + ((cF - cR).magnitude * 100).ToString("0.0") + " cm apart, tops " + ((tipF - tipR).magnitude * 100).ToString("0.0") + "; angle " + Vector3.Angle(uF, uR).ToString("0"));
+            }
         }
 
         private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)

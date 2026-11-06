@@ -77,7 +77,7 @@ namespace Harness.Logic
     /// <summary>Which rig node a group hangs on. Beta's R side (+X there) is her left.</summary>
     public static class GroupMap
     {
-        public const string Belt = "belt", GuideFront = "guideF", GuideRear = "guideR", LeftThigh = "thighL", RightThigh = "thighR", PistonFront = "pistonF", PistonRear = "pistonR", Own = "own";
+        public const string Belt = "belt", GuideFront = "guideF", GuideRear = "guideR", LeftThigh = "thighL", RightThigh = "thighR", PistonFront = "pistonF", PistonRear = "pistonR", RearChain = "chain", Own = "own";
 
         public static string NodeOf(string group)
         {
@@ -86,6 +86,7 @@ namespace Harness.Logic
             if (group == "guide_rear") return GuideRear;
             if (group == "piston_front") return PistonFront;
             if (group == "piston_rear") return PistonRear;
+            if (group == "rear_chain") return RearChain;
             if (group == "thigh_R") return LeftThigh;
             if (group == "thigh_L") return RightThigh;
             return Own; // rings, cord ends, stretched straps, springs and wire are placed one by one
