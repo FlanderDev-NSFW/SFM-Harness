@@ -18,7 +18,7 @@ namespace Harness
 
         internal static ManualLogSource Logger;
         internal static Restraint Entry;
-        public static ConfigEntry<float> AttemptSeconds, SuccessChance, HoopAlongThigh, ScaleTrim, GuideDrop, Size, BeltHeight;
+        public static ConfigEntry<float> AttemptSeconds, SuccessChance, HoopAlongThigh, ScaleTrim, GuideDrop, Size, BeltHeight, PelvisSize;
 
         public override void Load()
         {
@@ -29,6 +29,7 @@ namespace Harness
             ScaleTrim = Config.Bind("Fit", "ScaleTrim", 1f, "Multiplies the model's size.");
 
             BeltHeight = Config.Bind("Fit", "BeltHeight", 0.55f, "Where the belt sits, from hip joints (0) to chest (1).");
+            PelvisSize = Config.Bind("Fit", "PelvisSize", 0.6f, "Pistons and guides, against the rest of the harness.");
             Size = Config.Bind("Fit", "Size", 0.78f, "Overall size of the hardware and straps, against her body.");
             GuideDrop = Config.Bind("Fit", "GuideDrop", 0.03f, "How far the centre of each guide band sits below its anchor in her pelvis, in model metres.");
 

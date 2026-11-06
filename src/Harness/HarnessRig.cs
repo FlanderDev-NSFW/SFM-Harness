@@ -410,6 +410,7 @@ namespace Harness
                 sb.Append(" h").Append(h.ToString("+0.0;-0.0")).Append(": min ").Append((min * 1000).ToString("0.0")).Append(" at ").Append(worst.ToString("0")).Append(", mean ").Append((sum / Mathf.Max(n, 1) * 1000).ToString("0.0")).Append(", through ").Append(under).Append("/").Append(n).Append(";");
             }
             Plugin.Logger.LogInfo(sb.ToString()); Plugin.Logger.LogInfo(bins.ToString());
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] parts: stroke " + _driveF.Stroke.ToString("0.00") + " " + PartReport("front", _guideF, _axisF, w, tris, rot) + " " + PartReport("rear", _guideR, _axisR, w, tris, rot));
             if (_markers != null) { UnityEngine.Object.Destroy(_markers); _markers = null; }
             if (ShowMarkers && marks.Count > 0) { _markers = MarkerObject(marks); _markers.transform.SetParent(_belt, true); }   // she sways; the marks ride with the belt
         }
@@ -544,6 +545,58 @@ namespace Harness
             return o;
         }
 
+        /// <summary>
+        /// How a piston and its guide sit in her, along the piston axis in 2 cm steps from the guide. Per step: how deep her skin comes inside the part's
+        /// own radius on each side (mm: L her left, R her right, F front, B back), then whether the axis there is inside (i) or outside (o) her body.
+        /// </summary>
+        private string PartReport(string name, Transform guide, Vector3 axisModel, Vector3[] w, int[] tris, Quaternion rot)
+        {
+            Vector3 c = guide.position, ax = (guide.rotation * axisModel).normalized, right = rot * Vector3.right, fwd = rot * Vector3.forward, up = rot * Vector3.up;
+            float cap = 0.055f * guide.lossyScale.x, z0 = 9f, z1 = -9f, step = 0.02f;
+            var prof = new Dictionary<int, float>();
+            foreach (var mf in guide.GetComponentsInChildren<MeshFilter>())
+                foreach (var v in mf.sharedMesh.vertices)
+                {
+                    Vector3 p = mf.transform.TransformPoint(v) - c; float z = Vector3.Dot(p, ax), r = (p - ax * z).magnitude;
+                    if (r > cap) continue;
+                    int b = Mathf.FloorToInt(z / step);
+                    prof[b] = prof.TryGetValue(b, out float o) ? Mathf.Max(o, r) : r;
+                    z0 = Mathf.Min(z0, z); z1 = Mathf.Max(z1, z);
+                }
+            var deep = new Dictionary<int, float[]>();
+            for (int i = 0; i < w.Length; i++)
+            {
+                if (_arm[i]) continue;
+                Vector3 p = w[i] - c; float z = Vector3.Dot(p, ax); int b = Mathf.FloorToInt(z / step);
+                if (!prof.TryGetValue(b, out float pr)) continue;
+                Vector3 rad = p - ax * z; float r = rad.magnitude;
+                if (r >= pr) continue;
+                float x = Vector3.Dot(rad, right), f = Vector3.Dot(rad, fwd);
+                int side = Mathf.Abs(x) > Mathf.Abs(f) ? (x < 0f ? 0 : 1) : (f > 0f ? 2 : 3);
+                if (!deep.TryGetValue(b, out var d)) deep[b] = d = new float[4];
+                d[side] = Mathf.Max(d[side], pr - r);
+            }
+            var o2 = new System.Text.StringBuilder(name + " len " + ((z1 - z0) * 100).ToString("0.0") + "cm:");
+            Vector3 centre = _belt.position + right * _band.CentreX + fwd * _band.CentreZ;
+            for (int b = Mathf.FloorToInt(z0 / step); b <= Mathf.FloorToInt(z1 / step); b++)
+            {
+                Vector3 p = c + ax * ((b + 0.5f) * step);
+                Vector3 axisAt = centre + up * Vector3.Dot(p - centre, up);
+                float px = Vector3.Dot(p - axisAt, right), pz = Vector3.Dot(p - axisAt, fwd), rp = Mathf.Sqrt(px * px + pz * pz), rim = 0f;
+                if (rp > 0.001f)
+                    foreach (var q in Cut(w, tris, p, up, right, fwd, _arm))
+                    {
+                        float qx = q.X + px, qz = q.Y + pz, along = (qx * px + qz * pz) / rp, aside = Mathf.Abs(qx * pz - qz * px) / rp;
+                        if (aside < 0.012f && along > 0f) rim = Mathf.Max(rim, along);
+                    }
+                o2.Append(" [").Append(b * 2).Append(rp < rim ? " i" : " o");
+                if (deep.TryGetValue(b, out var d))
+                    for (int k = 0; k < 4; k++) if (d[k] > 0.0005f) o2.Append(' ').Append("LRFB"[k]).Append((d[k] * 1000).ToString("0"));
+                o2.Append(']');
+            }
+            return o2.ToString();
+        }
+
         /// <summary>Tiny bright cubes on the outline measured: if they sit on her skin in a screenshot, the data matches what is drawn.</summary>
         private GameObject MarkerObject(List<Vector3> pts)
         {
@@ -615,7 +668,8 @@ namespace Harness
             Transform hb = B(HumanBodyBones.Hips), sb = B(HumanBodyBones.Spine);
             _belt.SetPositionAndRotation(Vector3.Lerp(hb.position + hb.rotation * _lh, sb.position + sb.rotation * _ls, 0.5f), Quaternion.Slerp(hb.rotation * _qh, sb.rotation * _qs, 0.5f));
             float ls = _lowerScale * Plugin.ScaleTrim.Value;
-            PlaceGuides(anim, rot, ls);
+            float ps = ls * Plugin.PelvisSize.Value;
+            PlaceGuides(anim, rot, ps);
             PlaceThigh(_thighL, hl, kl, _hipL, _hoopL, rot);
             PlaceThigh(_thighR, hr, kr, _hipR, _hoopR, rot);
 
@@ -642,13 +696,14 @@ namespace Harness
             Line(_cords[0], seatAL, seatER, ls); Line(_cords[1], seatER, eyeF, ls); Line(_cords[2], seatAR, seatEL, ls); Line(_cords[3], seatEL, eyeR, ls);
             End("end_front_thigh", seatAL, seatER, "SOCKET_anchor_L", "SOCKET_eyelet_R", _thighR, ls);
             End("end_rear_thigh", seatAR, seatEL, "SOCKET_anchor_R", "SOCKET_eyelet_L", _thighL, ls);
-            End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ls);
-            End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ls);
+            End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ps);
+            End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ps);
             foreach (var st in _stretches)
             {
                 Vector3 a = Point(st.From, st.Start, st.FromOrigin), b = Point(st.To, st.End, st.ToOrigin), d = b - a;
                 st.T.SetPositionAndRotation(a, Quaternion.LookRotation(d, rot * st.Hint));
-                st.T.localScale = new Vector3(ls, ls, d.magnitude / st.Length);
+                float sw = st.Name.StartsWith("spring_") ? ps : ls;
+                st.T.localScale = new Vector3(sw, sw, d.magnitude / st.Length);
             }
             if (_wantBow) { _wantBow = false; Bow(anim); }
             Settle(anim);
