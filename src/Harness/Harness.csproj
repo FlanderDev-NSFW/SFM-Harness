@@ -10,6 +10,10 @@
     <SfmUsesRestraintHub>true</SfmUsesRestraintHub>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="assets\harness.hrn" LogicalName="Harness.assets.harness.hrn" />
+  </ItemGroup>
+
   <!-- Compile the shared SfmKit sources into this DLL (remove this line if you do not use it). -->
   <Import Project="$(RepoRoot)build\SfmKit.props" />
   <Import Project="$(RepoRoot)build\SfmMod.targets" />
