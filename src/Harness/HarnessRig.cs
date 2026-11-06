@@ -18,18 +18,26 @@ namespace Harness
         // Beta's sizes: the belt's opening, the hoop's opening, the belt's height, and the point of the model that goes at her crotch.
         private const float BeltInX = 0.136f, BeltInZ = 0.118f, BeltY = 0.219f, HoopInX = 0.0805f, HoopInZ = 0.0765f, Room = 1.04f, WaistShare = 0.45f, StrokeMetres = 0.09f, PistonTip = 0.237f;
 
-        /// <summary>A hoop shaped to her thigh: the model's hoop in a frame with Y along the thigh, moved onto the thigh's outline.</summary>
+        /// <summary>A thigh strap, fitted the way the belt is: a band shaped from her skin at three heights, checked against its real mesh, loosening as she moves.</summary>
         private sealed class Hoop
         {
-            public Quaternion ToFrame; public BeltShape Shape; public float Tall = 1f; public Mesh Mesh; public Vector3[] Rest;
+            public Quaternion ToFrame; public BeltBand Band; public float Tall = 1f, Half; public Mesh Mesh; public Vector3[] Rest; public float[] Inner, Lifted; public float[][] Bins;
+            public int[] Tris, Near; public Transform Node, Bone, Knee; public Vector3 LP; public Quaternion LQ; public Hoop Other;
+            public readonly List<Seat> Fixed = new List<Seat>();
             public Vector3 Local(Vector3 v)
             {
-                if (Shape == null) return v;
+                if (Band == null) return v;
                 Vector3 f = ToFrame * v;
-                var w = Shape.Warp(new NVector3(f.x, f.y, f.z), HoopInX, HoopInZ, 0f, Tall, Tall);
+                var w = Band.Warp(new NVector3(f.x, f.y, f.z), 0f, HoopHalf, Tall, Tall);
                 return Quaternion.Inverse(ToFrame) * new Vector3(w.X, w.Y, w.Z);
             }
         }
+
+        /// <summary>A rigid part on a strap, such as the pouch or the buckle: it rides the strap without bending.</summary>
+        private sealed class Seat { public Transform T; public Vector3 P; }
+
+        private const float HoopHalf = 0.024f;
+        private Transform _dev;
 
         private readonly Hoop _hoopFitL = new Hoop(), _hoopFitR = new Hoop();
 
@@ -84,9 +92,19 @@ namespace Harness
             var mats = new Material[_file.Materials.Count];
             Material source = FindToon();
             for (int i = 0; i < mats.Length; i++) mats[i] = MakeMaterial(source, _file.Materials[i]);
+            _dev = Node("Device", _thighL);
             var ends = StretchEnds();
             foreach (var g in _file.Groups)
             {
+                if (g.Name.StartsWith("rigid_"))
+                {
+                    bool her_left = g.Name == "rigid_dev" || g.Name.EndsWith("_R");   // Beta's R side is her left
+                    Transform seat = g.Name == "rigid_dev" ? _dev : Node(g.Name, her_left ? _thighL : _thighR);
+                    AddGroup(g, seat, U(g.Pivot), Quaternion.identity, mats, layer);
+                    Vector3 p = U(g.Pivot) - (her_left ? _hoopL : _hoopR); seat.localPosition = p;
+                    (her_left ? _hoopFitL : _hoopFitR).Fixed.Add(new Seat { T = seat, P = p });
+                    continue;
+                }
                 if (g.Name == "wire_up") continue;   // drawn along the chain and strap each frame
                 if (g.Name.StartsWith("link_"))
                 {
@@ -120,6 +138,7 @@ namespace Harness
                 }
                 else _own[g.Name] = AddGroup(g, _top.transform, U(g.Pivot), Quaternion.identity, mats, layer);
             }
+            SetupHoop(_hoopFitL, _thighL, _hoopFitR); SetupHoop(_hoopFitR, _thighR, _hoopFitL);
             MakeWire(mats[_file.Materials.FindIndex(m => m.Name == "pink")], layer);
             Mesh tube = Tube(0.0014f, 6);
             _owned.Add(tube);
@@ -149,7 +168,7 @@ namespace Harness
             d["vstrap_L"] = S("SOCKET_vstrap_top_L", _belt, Vector3.zero, "SOCKET_vstrap_bottom_L", _linkF[3], Sock("SOCKET_link_f3"));
             d["rear_strap"] = S("SOCKET_rear_strap_top", _belt, Vector3.zero, "SOCKET_rear_strap_bottom", _linkR[2], Sock("SOCKET_link_r2"));
             d["hinge_link"] = S("SOCKET_hinge_front", _guideF, _cF, "SOCKET_hinge_rear", _guideR, _cR); d["hinge_link"].Hint = Vector3.up;
-            d["wire_down"] = S("WIRE_mid", _belt, Vector3.zero, "WIRE_end", _thighL, _hoopL);
+            d["wire_down"] = S("WIRE_mid", _belt, Vector3.zero, "WIRE_end", _dev, Sock("SOCKET_remote"));
             foreach (string tag in new[] { "front", "rear" })
                 foreach (string side in new[] { "R", "L" })
                 {
@@ -381,8 +400,11 @@ namespace Harness
             Refit();
             for (int pass = 0; pass < 3; pass++) if (!Push(SkinNow(w, at, up, right, fwd))) break;
             _thighLength = (kl - hl).magnitude;
-            FitThigh(_hoopFitL, w, hl, kl, hr, kr, _hipL, _hoopL, rot, sy);
-            FitThigh(_hoopFitR, w, hr, kr, hl, kl, _hipR, _hoopR, rot, sy);
+            for (int pass = 0; pass < 2; pass++)
+            {
+                FitThigh(_hoopFitL, B(HumanBodyBones.LeftUpperLeg), B(HumanBodyBones.LeftLowerLeg), w, tris, _hipL, _hoopL, rot, sy);
+                FitThigh(_hoopFitR, B(HumanBodyBones.RightUpperLeg), B(HumanBodyBones.RightLowerLeg), w, tris, _hipR, _hoopR, rot, sy);
+            }
             _driveF.Reset(); _driveR.Reset();
             _needMeasure = false; _fits++; _wantBow = 3;
             Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: waist at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", " + (x1 - x0).ToString("0.000") + " x " + (z1 - z0).ToString("0.000") + ", band height " + (half * 2).ToString("0.000") + ", size " + sy.ToString("0.00"));
@@ -423,6 +445,22 @@ namespace Harness
                 sb.Append(" h").Append(h.ToString("+0.0;-0.0")).Append(": min ").Append((min * 1000).ToString("0.0")).Append(" at ").Append(worst.ToString("0")).Append(", mean ").Append((sum / Mathf.Max(n, 1) * 1000).ToString("0.0")).Append(", through ").Append(under).Append("/").Append(n).Append(";");
             }
             Plugin.Logger.LogInfo(sb.ToString()); Plugin.Logger.LogInfo(bins.ToString());
+            var hg = new System.Text.StringBuilder("[SFM-ACCEPT] hoopgap:");
+            foreach (var h in new[] { _hoopFitL, _hoopFitR })
+            {
+                if (h.Band == null) { hg.Append(" unfitted"); continue; }
+                var sk = HoopSkin(h, w, h.Node.position, h.Node.rotation * Quaternion.Inverse(h.ToFrame));
+                float lo = 9f, sum = 0f; int n = 0, under = 0;
+                for (int k = 0; k < sk.Length; k++)
+                    for (int i = 0; i < sk[k].Length; i++)
+                    {
+                        if (sk[k][i] <= 0f || h.Bins[k][i] > 8f) continue;
+                        float g = h.Bins[k][i] - sk[k][i]; if (g < -0.03f) continue;
+                        n++; sum += g; lo = Mathf.Min(lo, g); if (g < 0f) under++;
+                    }
+                hg.Append(' ').Append(h == _hoopFitL ? "left" : "right").Append(" min ").Append((lo * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)).Append(" mean ").Append((sum / Mathf.Max(n, 1) * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)).Append(" through ").Append(under).Append('/').Append(n);
+            }
+            Plugin.Logger.LogInfo(hg.ToString());
             Plugin.Logger.LogInfo("[SFM-ACCEPT] chain: " + ChainReport(_linkF, 1f, w, tris, rot) + " | " + ChainReport(_linkR, -1f, w, tris, rot));
             Plugin.Logger.LogInfo("[SFM-ACCEPT] parts: stroke " + _driveF.Stroke.ToString("0.00") + " " + PartReport("front", _guideF, _axisF, w, tris, rot) + " " + PartReport("rear", _guideR, _axisR, w, tris, rot));
             if (_markers != null) { UnityEngine.Object.Destroy(_markers); _markers = null; }
@@ -458,18 +496,24 @@ namespace Harness
         /// </summary>
         private bool Push(float[][] skin)
         {
+            if (!Loosen(_band, _beltBins, skin, _lifted)) return false;
+            Refit();
+            return true;
+        }
+
+        private static bool Loosen(BeltBand band, float[][] mesh, float[][] skin, float[] lifted)
+        {
             var need = new float[BeltBand.Bins]; float most = 0f;
             for (int k = 0; k < skin.Length; k++)
                 for (int i = 0; i < need.Length; i++)
-                    if (skin[k][i] > 0f && _beltBins[k][i] < 8f && skin[k][i] < _beltBins[k][i] + 0.03f) need[i] = Mathf.Max(need[i], Clear - (_beltBins[k][i] - skin[k][i]));
+                    if (skin[k][i] > 0f && mesh[k][i] < 8f && skin[k][i] < mesh[k][i] + 0.03f) need[i] = Mathf.Max(need[i], Clear - (mesh[k][i] - skin[k][i]));
             for (int i = 0; i < need.Length; i++)
             {
-                need[i] = Mathf.Clamp(need[i], 0f, MaxLift - _lifted[i]);
-                _lifted[i] += need[i]; most = Mathf.Max(most, need[i]);
+                need[i] = Mathf.Clamp(need[i], 0f, MaxLift - lifted[i]);
+                lifted[i] += need[i]; most = Mathf.Max(most, need[i]);
             }
             if (most < 0.0005f) return false;
-            _band.Lift(need);
-            Refit();
+            band.Lift(need);
             return true;
         }
 
@@ -486,6 +530,8 @@ namespace Harness
             var skin = SkinNow(w, _belt.position, rot * Vector3.up, rot * Vector3.right, rot * Vector3.forward);
             float tc = (float)clock.Elapsed.TotalMilliseconds;
             bool moved = Push(skin);
+            foreach (var h in new[] { _hoopFitL, _hoopFitR })
+                if (h.Band != null) moved |= HoopPush(h, HoopSkin(h, w, h.Node.position, h.Node.rotation * Quaternion.Inverse(h.ToFrame)));
             LookMs = Mathf.Max(LookMs, tc); if (_looks++ % 40 == 0) Plugin.Logger.LogInfo("[SFM-ACCEPT] look: bake " + tb.ToString("0.0") + " cut " + (tc - tb).ToString("0.0") + " slowest " + LookMs.ToString("0.0") + " ms");
             _settled = moved ? 0 : _settled + 1;
             _nextSettle = Time.time + (_settled < 20 ? 0.25f : 1.5f);
@@ -568,13 +614,14 @@ namespace Harness
         }
 
         /// <summary>Radius by angle about the band's centre: the outermost point in each bin, or the innermost.</summary>
-        private float[] Bins(List<System.Numerics.Vector2> pts, bool outer)
+        private float[] Bins(List<System.Numerics.Vector2> pts, bool outer, BeltBand band = null)
         {
+            band ??= _band;
             var o = new float[BeltBand.Bins];
             if (!outer) for (int i = 0; i < o.Length; i++) o[i] = 9f;
             foreach (var p in pts)
             {
-                float dx = p.X - _band.CentreX, dz = p.Y - _band.CentreZ, r = Mathf.Sqrt(dx * dx + dz * dz); int b = BeltBand.Bin(Mathf.Atan2(dx, dz));
+                float dx = p.X - band.CentreX, dz = p.Y - band.CentreZ, r = Mathf.Sqrt(dx * dx + dz * dz); int b = BeltBand.Bin(Mathf.Atan2(dx, dz));
                 o[b] = outer ? Mathf.Max(o[b], r) : Mathf.Min(o[b], r);
             }
             return o;
@@ -690,26 +737,87 @@ namespace Harness
             return (p - (a + ab * t)).magnitude;
         }
 
-        private void FitThigh(Hoop h, Vector3[] w, Vector3 hip, Vector3 knee, Vector3 otherHip, Vector3 otherKnee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot, float sy)
+        private void SetupHoop(Hoop h, Transform node, Hoop other)
         {
-            float f = Plugin.HoopAlongThigh.Value, len = (knee - hip).magnitude, half = 0.024f * sy + 0.004f;
-            Vector3 at = hip + (knee - hip) * f, oat = otherHip + (otherKnee - otherHip) * f;
-            Quaternion q = ThighTurn(hip, knee, modelHip, modelHoop, rot), inv = Quaternion.Inverse(q);
-            var pts = new List<System.Numerics.Vector2>();
-            foreach (var p in w)
+            h.Node = node; h.Other = other; h.Tris = h.Mesh.triangles;
+            var nv = new NVector3[h.Rest.Length];
+            for (int i = 0; i < nv.Length; i++) { Vector3 f = h.ToFrame * h.Rest[i]; nv[i] = new NVector3(f.x, f.y, f.z); }
+            h.Inner = BeltBand.ModelInner(nv, 0f, 0.03f);
+        }
+
+        /// <summary>One cut across her thigh: her skin in the strap's plane, the other leg's left out.</summary>
+        private List<System.Numerics.Vector2> ThighCut(Hoop h, Vector3[] w, Vector3 at, Quaternion frame, float height)
+        {
+            Vector3 x = frame * Vector3.right, y = frame * Vector3.up, z = frame * Vector3.forward, o = at + y * height;
+            var keep = new List<System.Numerics.Vector2>();
+            Vector3 ah = h.Bone.position, ak = h.Knee.position, bh = h.Other.Bone.position, bk = h.Other.Knee.position;
+            foreach (var q in Cut(w, h.Near, o, y, x, z))
             {
-                if ((p - at).sqrMagnitude > (p - oat).sqrMagnitude || (p - at).sqrMagnitude > len * len * 0.36f) continue;   // the other leg's skin, or far away
-                Vector3 l = h.ToFrame * (inv * (p - at));
-                if (Mathf.Abs(l.y) <= half) pts.Add(new System.Numerics.Vector2(l.x, l.z));
+                Vector3 p = o + x * q.X + z * q.Y;
+                if (SegDist(p, ah, ak) <= SegDist(p, bh, bk)) keep.Add(q);
             }
-            var shape = BeltShape.From(pts, 0.002f);
-            if (shape == null) return;
-            h.Shape = shape; h.Tall = sy;
-            var v = new Vector3[h.Rest.Length];
-            for (int i = 0; i < v.Length; i++) v[i] = h.Local(h.Rest[i]);
-            h.Mesh.vertices = v;
-            h.Mesh.RecalculateNormals();
-            h.Mesh.RecalculateBounds();
+            return keep;
+        }
+
+        private float[][] HoopSkin(Hoop h, Vector3[] w, Vector3 at, Quaternion frame)
+        {
+            var o = new float[Heights.Length][];
+            for (int k = 0; k < o.Length; k++) o[k] = Bins(ThighCut(h, w, at, frame, Heights[k] * h.Half), true, h.Band);
+            return o;
+        }
+
+        private void HoopRefit(Hoop h)
+        {
+            var v = new Vector3[h.Rest.Length]; var f = new Vector3[v.Length];
+            for (int i = 0; i < v.Length; i++) { v[i] = h.Local(h.Rest[i]); f[i] = h.ToFrame * v[i]; }
+            h.Mesh.vertices = v; h.Mesh.RecalculateNormals(); h.Mesh.RecalculateBounds();
+            h.Bins = new float[Heights.Length][];
+            for (int k = 0; k < Heights.Length; k++) h.Bins[k] = Bins(Cut(f, h.Tris, Vector3.up * (Heights[k] * h.Half), Vector3.up, Vector3.right, Vector3.forward), false, h.Band);
+            foreach (var st in h.Fixed)
+            {
+                // where the strap takes this point, and how it turns the strap there, measured along the strap
+                Vector3 c = h.ToFrame * st.P, along = Vector3.Cross(Vector3.up, new Vector3(c.x, 0f, c.z)).normalized * 0.008f, back = Quaternion.Inverse(h.ToFrame) * along;
+                Vector3 before = back * 2f, after = h.Local(st.P + back) - h.Local(st.P - back);
+                st.T.localPosition = h.Local(st.P);
+                st.T.localRotation = Quaternion.FromToRotation(before.normalized, after.normalized);
+                st.T.localScale = Vector3.one * h.Tall;
+            }
+        }
+
+        private bool HoopPush(Hoop h, float[][] skin)
+        {
+            if (!Loosen(h.Band, h.Bins, skin, h.Lifted)) return false;
+            HoopRefit(h);
+            return true;
+        }
+
+        private void FitThigh(Hoop h, Transform bone, Transform knee, Vector3[] w, int[] tris, Vector3 modelHip, Vector3 modelHoop, Quaternion rot, float sy)
+        {
+            Vector3 hp = bone.position, kp = knee.position, at = hp + (kp - hp) * Plugin.HoopAlongThigh.Value;
+            Quaternion q = ThighTurn(hp, kp, modelHip, modelHoop, rot), frame = q * Quaternion.Inverse(h.ToFrame);
+            h.Bone = bone; h.Knee = knee;
+            if (h.Other.Bone == null) return;   // both legs are needed to tell their skin apart
+            var near = new List<int>();
+            for (int i = 0; i < tris.Length; i += 3)
+            {
+                int a = tris[i], b = tris[i + 1], c = tris[i + 2];
+                if (_arm[a] || _arm[b] || _arm[c] || (w[a] - at).sqrMagnitude > 0.05f) continue;
+                near.Add(a); near.Add(b); near.Add(c);
+            }
+            h.Near = near.ToArray();
+            float half = HoopHalf * sy;
+            Vector3 y = frame * Vector3.up;
+            var mid = ThighCut(h, w, at, frame, 0f);
+            if (mid.Count < 8) return;
+            float x0 = 9, x1 = -9, z0 = 9, z1 = -9;
+            foreach (var p in mid) { x0 = Mathf.Min(x0, p.X); x1 = Mathf.Max(x1, p.X); z0 = Mathf.Min(z0, p.Y); z1 = Mathf.Max(z1, p.Y); }
+            var band = BeltBand.From(ThighCut(h, w, at, frame, -half), mid, ThighCut(h, w, at, frame, half), new System.Numerics.Vector2((x0 + x1) / 2, (z0 + z1) / 2), 0.0015f, h.Inner);
+            if (band == null) return;
+            h.Band = band; h.Tall = sy; h.Half = half; h.Lifted = new float[BeltBand.Bins];
+            h.LP = Quaternion.Inverse(bone.rotation) * (at - hp); h.LQ = Quaternion.Inverse(bone.rotation) * q;
+            HoopRefit(h);
+            for (int pass = 0; pass < 3; pass++) if (!HoopPush(h, HoopSkin(h, w, at, frame))) break;
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] thigh: " + (x1 - x0).ToString("0.000") + " x " + (z1 - z0).ToString("0.000") + ", " + near.Count / 3 + " triangles");
         }
 
         private static Quaternion ThighTurn(Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot) =>
@@ -734,8 +842,8 @@ namespace Harness
             float ls = _lowerScale * Plugin.ScaleTrim.Value;
             float ps = ls * Plugin.PelvisSize.Value;
             PlaceGuides(anim, rot, ps);
-            PlaceThigh(_thighL, hl, kl, _hipL, _hoopL, rot);
-            PlaceThigh(_thighR, hr, kr, _hipR, _hoopR, rot);
+            PlaceThigh(_thighL, _hoopFitL, hl, kl, _hipL, _hoopL, rot);
+            PlaceThigh(_thighR, _hoopFitR, hr, kr, _hipR, _hoopR, rot);
 
             // Beta's anchor_L and eyelet_L hang on her right thigh, anchor_R and eyelet_R on her left
             Vector3 barAL = Bar("anchor_L", _thighR, _hoopFitR, _hoopR), barAR = Bar("anchor_R", _thighL, _hoopFitL, _hoopL), barEL = Bar("eyelet_L", _thighR, _hoopFitR, _hoopR), barER = Bar("eyelet_R", _thighL, _hoopFitL, _hoopL);
@@ -1032,9 +1140,10 @@ namespace Harness
             t.localScale = Vector3.one * scale;
         }
 
-        private void PlaceThigh(Transform node, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot)
+        private void PlaceThigh(Transform node, Hoop h, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Quaternion rot)
         {
-            node.SetPositionAndRotation(hip + (knee - hip) * Plugin.HoopAlongThigh.Value, ThighTurn(hip, knee, modelHip, modelHoop, rot));
+            if (h.Band != null) node.SetPositionAndRotation(h.Bone.position + h.Bone.rotation * h.LP, h.Bone.rotation * h.LQ);   // rides her thigh bone, twist and all
+            else node.SetPositionAndRotation(hip + (knee - hip) * Plugin.HoopAlongThigh.Value, ThighTurn(hip, knee, modelHip, modelHoop, rot));
         }
 
         private static void Line(Transform t, Vector3 a, Vector3 b, float s)
@@ -1049,7 +1158,7 @@ namespace Harness
             if (_top != null) UnityEngine.Object.Destroy(_top);
             _top = null;
             foreach (var o in _owned) if (o != null) UnityEngine.Object.Destroy(o);
-            _owned.Clear(); _own.Clear(); _stretches.Clear(); _anchorF = null; _band = null; if (_markers != null) UnityEngine.Object.Destroy(_markers); _markers = null; _hoopFitL.Shape = null; _hoopFitR.Shape = null;
+            _owned.Clear(); _own.Clear(); _stretches.Clear(); _anchorF = null; _band = null; if (_markers != null) UnityEngine.Object.Destroy(_markers); _markers = null; _hoopFitL.Band = null; _hoopFitR.Band = null; _hoopFitL.Fixed.Clear(); _hoopFitR.Fixed.Clear(); _hoopFitL.Bone = _hoopFitR.Bone = null;
             _visible = false;
         }
     }
