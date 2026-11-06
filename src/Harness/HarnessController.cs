@@ -152,6 +152,25 @@ namespace Harness
 
         public static string Stroke(string v) { HarnessRig.ForcedStroke = float.Parse(v, System.Globalization.CultureInfo.InvariantCulture); return "stroke " + v; }
 
+        public static string GapNow() { if (Instance?._rig == null) return "no rig"; Instance._rig.WantGap = true; return "gap report on the next frame"; }
+
+        public static string MarkersNow(string on) { if (Instance?._rig == null) return "no rig"; HarnessRig.ShowMarkers = on == "1"; Instance._rig.WantGap = true; return "markers " + on; }
+
+        /// <summary>Diagnostics. Near clip in metres, so an arm in front of the waist can be cut out of a shot; 0 restores it.</summary>
+        public static string NearNow(string v)
+        {
+            float n = float.Parse(v, System.Globalization.CultureInfo.InvariantCulture);
+            if (Camera.main == null) return "no camera";
+            if (_near < 0f) _near = Camera.main.nearClipPlane;
+            Camera.main.nearClipPlane = n > 0f ? n : _near;
+            return "near " + Camera.main.nearClipPlane;
+        }
+        private static float _near = -1f;
+
+        public static string HideNow(string on) { Instance?._rig?.Hide(on == "1"); return "hidden " + on; }
+
+        public static string GapWatch(string seconds) { if (Instance?._rig == null) return "no rig"; Instance._rig.WatchUntil = Time.time + float.Parse(seconds, System.Globalization.CultureInfo.InvariantCulture); return "watching"; }
+
         public static string TakeOffNow() { Instance?.TakeOff(); return "off"; }
 
         /// <summary>Slices her body at many heights and logs the sizes: what the fit has to work from.</summary>

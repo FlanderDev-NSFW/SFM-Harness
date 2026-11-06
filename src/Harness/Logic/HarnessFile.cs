@@ -102,13 +102,13 @@ namespace Harness.Logic
         public float CentreX, CentreZ;
         public readonly float[] Radius = new float[Bins];
 
-        public static BeltShape From(List<Vector2> points, float room)
+        public static BeltShape From(List<Vector2> points, float room, Vector2? centre = null)
         {
             var s = new BeltShape();
             if (points.Count < 8) return null;
             float x0 = 9, x1 = -9, z0 = 9, z1 = -9;
             foreach (var p in points) { x0 = Math.Min(x0, p.X); x1 = Math.Max(x1, p.X); z0 = Math.Min(z0, p.Y); z1 = Math.Max(z1, p.Y); }
-            s.CentreX = (x0 + x1) / 2; s.CentreZ = (z0 + z1) / 2;
+            s.CentreX = centre?.X ?? (x0 + x1) / 2; s.CentreZ = centre?.Y ?? (z0 + z1) / 2;
             var hull = Hull(points);
             for (int i = 0; i < Bins; i++)
             {
@@ -162,6 +162,94 @@ namespace Harness.Logic
             if (r < 1e-5f) return new Vector3(CentreX, (v.Y - beltY) * tall, CentreZ);
             float sn = v.X / r, cs = v.Z / r, inner = 1f / MathF.Sqrt(sn * sn / (insideX * insideX) + cs * cs / (insideZ * insideZ));
             float nr = At(MathF.Atan2(sn, cs)) + (r - inner) * thick;
+            return new Vector3(CentreX + sn * nr, (v.Y - beltY) * tall, CentreZ + cs * nr);
+        }
+    }
+
+    /// <summary>
+    /// The belt as a band of leather: straight from its lower edge to its upper edge at every angle (it can't follow a hollow up and down), and
+    /// raised where needed so that line clears her skin at mid height too.
+    /// </summary>
+    public sealed class BeltBand
+    {
+        public const int Bins = BeltShape.Bins;
+        public float CentreX, CentreZ;
+        public readonly float[] Lower = new float[Bins], Upper = new float[Bins], Inner = new float[Bins];
+
+        /// <summary>The model's inside radius by angle: the innermost point near each angle, so the pads are what meets her skin.</summary>
+        public static float[] ModelInner(IList<Vector3> verts, float beltY, float half)
+        {
+            var raw = new float[Bins];
+            for (int i = 0; i < Bins; i++) raw[i] = 9f;
+            foreach (var v in verts)
+            {
+                if (MathF.Abs(v.Y - beltY) > half) continue;
+                int b = Bin(MathF.Atan2(v.X, v.Z));
+                raw[b] = MathF.Min(raw[b], MathF.Sqrt(v.X * v.X + v.Z * v.Z));
+            }
+            var o = new float[Bins];
+            for (int i = 0; i < Bins; i++)
+            {
+                float m = 9f;
+                for (int k = -2; k <= 2; k++) m = MathF.Min(m, raw[(i + k + Bins) % Bins]);
+                o[i] = m;
+            }
+            return o;
+        }
+
+        public static int Bin(float angle)
+        {
+            float f = angle / (2f * MathF.PI) * Bins;
+            int i = (int)MathF.Floor(f + 0.5f) % Bins;
+            return i < 0 ? i + Bins : i;
+        }
+
+        public static BeltBand From(List<Vector2> lower, List<Vector2> mid, List<Vector2> upper, Vector2 centre, float room, float[] inner)
+        {
+            BeltShape a = BeltShape.From(lower, room, centre), m = BeltShape.From(mid, room, centre), b = BeltShape.From(upper, room, centre);
+            if (a == null || m == null || b == null) return null;
+            var o = new BeltBand { CentreX = centre.X, CentreZ = centre.Y };
+            for (int i = 0; i < Bins; i++)
+            {
+                float lift = MathF.Max(0f, m.Radius[i] - (a.Radius[i] + b.Radius[i]) / 2);
+                o.Lower[i] = a.Radius[i] + lift; o.Upper[i] = b.Radius[i] + lift; o.Inner[i] = inner[i];
+            }
+            return o;
+        }
+
+        /// <summary>Moves the band out by what each angle lacks, and a little to either side so the push doesn't leave a kink.</summary>
+        public void Lift(float[] need)
+        {
+            var o = new float[Bins];
+            for (int i = 0; i < Bins; i++)
+            {
+                float n = MathF.Max(need[i], 0.6f * MathF.Max(need[(i + 1) % Bins], need[(i + Bins - 1) % Bins]));
+                o[i] = MathF.Max(n, 0f);
+            }
+            for (int i = 0; i < Bins; i++) { Lower[i] += o[i]; Upper[i] += o[i]; }
+        }
+
+        private static float Lerp(float[] t, float angle)
+        {
+            float f = angle / (2f * MathF.PI) * Bins;
+            f -= MathF.Floor(f / Bins) * Bins;
+            int i = (int)f % Bins, j = (i + 1) % Bins; float u = f - MathF.Floor(f);
+            return t[i] + (t[j] - t[i]) * u;
+        }
+
+        /// <summary>The band's inside at an angle and a height (-1 lower edge, 1 upper edge).</summary>
+        public float Inside(float angle, float height)
+        {
+            float u = Math.Clamp((height + 1f) / 2f, 0f, 1f);
+            return Lerp(Lower, angle) + (Lerp(Upper, angle) - Lerp(Lower, angle)) * u;
+        }
+
+        public Vector3 Warp(Vector3 v, float beltY, float halfModel, float tall, float thick)
+        {
+            float r = MathF.Sqrt(v.X * v.X + v.Z * v.Z);
+            if (r < 1e-5f) return new Vector3(CentreX, (v.Y - beltY) * tall, CentreZ);
+            float a = MathF.Atan2(v.X, v.Z), sn = v.X / r, cs = v.Z / r, h = (v.Y - beltY) / halfModel;
+            float nr = Inside(a, h) + (r - Lerp(Inner, a)) * thick;
             return new Vector3(CentreX + sn * nr, (v.Y - beltY) * tall, CentreZ + cs * nr);
         }
     }

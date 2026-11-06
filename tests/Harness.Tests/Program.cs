@@ -38,6 +38,18 @@ namespace Harness.Tests
             Check(Math.Abs(w.X - 0.2f) < 0.002f && Math.Abs(w.Y) < 1e-5f, "the model's inner side lands on her outline");
             var w2 = shape.Warp(new System.Numerics.Vector3(0.15f, 0.25f, 0f), 0.14f, 0.12f, 0.219f, 0.5f, 0.5f);
             Check(Math.Abs(w2.X - 0.205f) < 0.002f && Math.Abs(w2.Y - 0.0155f) < 1e-4f, "thickness and height scale");
+            var ring = new System.Collections.Generic.List<System.Numerics.Vector2>(); var ring2 = new System.Collections.Generic.List<System.Numerics.Vector2>(); var ring3 = new System.Collections.Generic.List<System.Numerics.Vector2>();
+            for (int i = 0; i < 90; i++) { float a = i * 0.0698f; ring.Add(new(0.2f * MathF.Sin(a), 0.2f * MathF.Cos(a))); ring2.Add(new(0.18f * MathF.Sin(a), 0.18f * MathF.Cos(a))); ring3.Add(new(0.1f * MathF.Sin(a), 0.1f * MathF.Cos(a))); }
+            var inner = new float[BeltBand.Bins]; Array.Fill(inner, 0.13f);
+            var band = BeltBand.From(ring, ring3, ring3, System.Numerics.Vector2.Zero, 0f, inner);
+            Check(Math.Abs(band.Inside(0f, -1f) - 0.2f) < 0.002f && Math.Abs(band.Inside(0f, 1f) - 0.1f) < 0.002f, "band: edges follow her");
+            var band2 = BeltBand.From(ring3, ring, ring3, System.Numerics.Vector2.Zero, 0f, inner);
+            Check(band2.Inside(1f, 0f) >= 0.199f, "band: a bulge at mid height lifts the band over it");
+            var lift = new float[BeltBand.Bins]; lift[0] = 0.01f; band.Lift(lift);
+            Check(Math.Abs(band.Lower[0] - 0.21f) < 0.002f && band.Lower[1] > band.Lower[3], "band: a push out spreads to its neighbours");
+            band = BeltBand.From(ring, ring3, ring3, System.Numerics.Vector2.Zero, 0f, inner);
+            var wb = band.Warp(new System.Numerics.Vector3(0f, 0.2f, 0.14f), 0.2f, 0.04f, 0.5f, 0.5f);
+            Check(Math.Abs(wb.Z - 0.155f) < 0.002f, "band: thickness kept outside her");
             var span = SliceStats.CentralSpan(new System.Collections.Generic.List<float> { -0.3f, -0.1f, 0f, 0.1f, 0.34f }, 0.15f);
             Check(span.Min == -0.1f && span.Max == 0.1f, "arms beside the waist are left out");
 

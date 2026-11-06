@@ -33,21 +33,25 @@ namespace Harness
 
         private readonly Hoop _hoopFitL = new Hoop(), _hoopFitR = new Hoop();
 
-        private sealed class Stretch { public Transform T; public Vector3 Start, End, Hint; public float Length; public Transform From, To; public Vector3 FromOrigin, ToOrigin; }
+        private sealed class Stretch { public Transform T; public Vector3 Start, End, Hint; public float Length; public string Name; public Mesh Mesh; public Vector3[] Rest; public Transform From, To; public Vector3 FromOrigin, ToOrigin; }
 
         private readonly HarnessFile _file;
         private GameObject _top;
         private Transform _belt, _guideF, _guideR, _thighL, _thighR, _pistonF, _pistonR, _anchorF, _anchorR, _axisObjF;
-        private Mesh _beltMesh; private Vector3[] _beltRest; private BeltShape _shape; private float _beltTall = 1f, _beltThick = 1f;
-        private Vector3 _cF, _cR; private float _guideGap; private bool _needSurvey = true;
+        private Mesh _beltMesh; private Vector3[] _beltRest; private BeltBand _band; private float _beltTall = 1f, _beltThick = 1f; private float[] _modelInner;
+        private bool[] _arm; private Vector3 _lh, _ls; private Quaternion _qh, _qs; private GameObject _markers; private Material _markerMat;
+        public bool WantGap; public static bool ShowMarkers; public float WatchUntil; private float _nextWatch;
+        public void Hide(bool off) { if (_top != null) foreach (var r in _top.GetComponentsInChildren<MeshRenderer>(true)) r.enabled = !off; }
+        private const float BeltHalf = 0.039f, Clear = 0.002f, MaxLift = 0.012f;
+        private float _beltHalf, _nextSettle; private float[] _lifted; private float[][] _beltBins; private int[] _waistTris, _beltTris; private int _settled; private bool _wantBow; public float SettleMs, LookMs; private int _looks;
+        private Vector3 _cF, _cR; private float _guideGap; private bool _needMeasure = true;
         private readonly Dictionary<string, Transform> _own = new Dictionary<string, Transform>();
         private readonly List<Stretch> _stretches = new List<Stretch>();
         private readonly Transform[] _cords = new Transform[4];
         private readonly List<UnityEngine.Object> _owned = new List<UnityEngine.Object>();
         private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive();
         private Vector3 _hipL, _hipR, _hoopL, _hoopR, _axisF, _axisR;
-        private Vector3 _waist;
-        private float _lowerScale = 1f, _nextFit, _thighLength;
+                private float _lowerScale = 1f, _nextFit, _thighLength;
         private int _fits;
         private bool _visible;
         public string Status = "";
@@ -84,7 +88,13 @@ namespace Harness
                     Transform parent = node switch { GroupMap.LeftThigh => _thighL, GroupMap.RightThigh => _thighR, GroupMap.PistonFront => _pistonF, GroupMap.PistonRear => _pistonR, GroupMap.Belt => _belt, GroupMap.GuideFront => _guideF, _ => _guideR };
                     Vector3 origin = node == GroupMap.LeftThigh ? _hoopL : node == GroupMap.RightThigh ? _hoopR : node == GroupMap.GuideFront || node == GroupMap.PistonFront ? _cF : node == GroupMap.GuideRear || node == GroupMap.PistonRear ? _cR : Vector3.zero;
                     var t = AddGroup(g, parent, origin, Quaternion.identity, mats, layer);
-                    if (node == GroupMap.Belt) { _beltMesh = t.GetComponent<MeshFilter>().sharedMesh; _beltRest = _beltMesh.vertices; }
+                    if (node == GroupMap.Belt)
+                    {
+                        _beltMesh = t.GetComponent<MeshFilter>().sharedMesh; _beltRest = _beltMesh.vertices;
+                        var nv = new NVector3[_beltRest.Length];
+                        for (int i = 0; i < nv.Length; i++) nv[i] = new NVector3(_beltRest[i].x, _beltRest[i].y, _beltRest[i].z);
+                        _modelInner = BeltBand.ModelInner(nv, BeltY, 0.03f);
+                    }
                     if (node == GroupMap.LeftThigh) { _hoopFitL.Mesh = t.GetComponent<MeshFilter>().sharedMesh; _hoopFitL.Rest = _hoopFitL.Mesh.vertices; _hoopFitL.ToFrame = Quaternion.FromToRotation((_hipL - _hoopL).normalized, Vector3.up); }
                     if (node == GroupMap.RightThigh) { _hoopFitR.Mesh = t.GetComponent<MeshFilter>().sharedMesh; _hoopFitR.Rest = _hoopFitR.Mesh.vertices; _hoopFitR.ToFrame = Quaternion.FromToRotation((_hipR - _hoopR).normalized, Vector3.up); }
                 }
@@ -93,6 +103,7 @@ namespace Harness
                     Vector3 d = st.End - st.Start;
                     st.Length = d.magnitude;
                     st.T = AddGroup(g, _top.transform, st.Start, Quaternion.Inverse(Quaternion.LookRotation(d, st.Hint)), mats, layer);
+                    st.Name = g.Name; st.Mesh = st.T.GetComponent<MeshFilter>().sharedMesh; st.Rest = st.Mesh.vertices;
                     _stretches.Add(st);
                 }
                 else _own[g.Name] = AddGroup(g, _top.transform, U(g.Pivot), Quaternion.identity, mats, layer);
@@ -112,7 +123,7 @@ namespace Harness
                 _cords[i] = go.transform;
             }
             _driveF.Reset(); _driveR.Reset();
-            _fits = 0; _nextFit = 0f; _needSurvey = true;
+            _fits = 0; _nextFit = 0f; _needMeasure = true; _markerMat = mats[_file.Materials.FindIndex(m => m.Name == "pink")];
             SetVisible(false);
         }
 
@@ -247,65 +258,312 @@ namespace Harness
             if (from.sqrMagnitude > 1e-8f && to.sqrMagnitude > 1e-8f) a.rotation = Quaternion.FromToRotation(from, to) * a.rotation;
         }
 
-        /// <summary>LateUpdate: for one moment her arms straight out to the sides, bake, put them back, and measure from that bake.</summary>
+        /// <summary>
+        /// LateUpdate, once: for one moment her arms straight out, bake, and note which vertices are arm. Vertex order never changes, so the note
+        /// holds in every pose. Nothing is measured from this bake: posed here, it isn't the body she is drawn with.
+        /// </summary>
         public void Survey(Animator anim)
         {
-            if (!_needSurvey) return;
+            if (_arm != null) return;
             Transform B(HumanBodyBones b) => anim.GetBoneTransform(b);
-            Vector3 hl = B(HumanBodyBones.LeftUpperLeg).position, hr = B(HumanBodyBones.RightUpperLeg).position, mid = (hl + hr) * 0.5f, chest = B(HumanBodyBones.Chest).position;
-            Vector3 right = (hr - hl).normalized;
             var moved = new[] { HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm, HumanBodyBones.RightUpperArm, HumanBodyBones.RightLowerArm };
             var saved = new Quaternion[moved.Length];
             for (int k = 0; k < moved.Length; k++) saved[k] = B(moved[k]).localRotation;
             var smr = HarnessController.FindBody(anim);
             if (smr == null) return;
-            Vector3[] w;
+            Vector3 hl = B(HumanBodyBones.LeftUpperLeg).position, hr = B(HumanBodyBones.RightUpperLeg).position, mid = (hl + hr) * 0.5f, right = (hr - hl).normalized;
+            var still = Bake(smr, out _);
             try
             {
                 Aim(B(HumanBodyBones.LeftUpperArm), B(HumanBodyBones.LeftLowerArm), B(HumanBodyBones.LeftUpperArm).position - right);
                 Aim(B(HumanBodyBones.LeftLowerArm), B(HumanBodyBones.LeftHand), B(HumanBodyBones.LeftLowerArm).position - right);
                 Aim(B(HumanBodyBones.RightUpperArm), B(HumanBodyBones.RightLowerArm), B(HumanBodyBones.RightUpperArm).position + right);
                 Aim(B(HumanBodyBones.RightLowerArm), B(HumanBodyBones.RightHand), B(HumanBodyBones.RightLowerArm).position + right);
-                var mesh = new Mesh();
-                smr.BakeMesh(mesh, true);
-                Transform t = smr.transform;
-                Vector3[] raw = mesh.vertices;
-                w = new Vector3[raw.Length];
-                for (int i = 0; i < raw.Length; i++) w[i] = t.position + t.rotation * Vector3.Scale(t.lossyScale, raw[i]);
-                UnityEngine.Object.Destroy(mesh);
+                var w = Bake(smr, out _);
+                var arm = new bool[w.Length]; int n = 0;
+                for (int i = 0; i < w.Length; i++) if ((w[i] - still[i]).sqrMagnitude > 0.0001f) { arm[i] = true; n++; }   // arm = whatever moved with the arms
+                _arm = arm;
+                Plugin.Logger.LogInfo("[SFM-ACCEPT] labels: " + n + " of " + w.Length + " vertices are arm");
             }
             finally { for (int k = 0; k < moved.Length; k++) B(moved[k]).localRotation = saved[k]; }
-            Vector3 up = Vector3.ProjectOnPlane(chest - mid, right).normalized, fwd = Vector3.Cross(right, up);
-            Vector3 kl = B(HumanBodyBones.LeftLowerLeg).position, kr = B(HumanBodyBones.RightLowerLeg).position;
-            float top = Vector3.Dot(chest - mid, up), h0 = top * WaistShare;
-            var a = Slice(w, mid + up * h0, up, right, fwd);
-            if (a.W < 0.02f) return;
-            float scx = a.W / 2 / BeltInX, scz = a.D / 2 / BeltInZ, sy = (scx + scz) / 2, half = 0.039f * sy;
-            // everything over the belt's height, near enough to the middle not to be an arm
-            var pts = new List<System.Numerics.Vector2>();
-            foreach (var p in w)
+        }
+
+        /// <summary>Her skin as drawn right now. Call in onPreCull, when her bones are final.</summary>
+        private static Vector3[] Bake(SkinnedMeshRenderer smr, out int[] triangles) { var m = new Mesh(); smr.BakeMesh(m, true); triangles = m.triangles; var w = World(smr, m); UnityEngine.Object.Destroy(m); return w; }
+
+        private Mesh _bakeMesh;
+        private Vector3[] Bake(SkinnedMeshRenderer smr) { _bakeMesh ??= new Mesh(); smr.BakeMesh(_bakeMesh, true); return World(smr, _bakeMesh); }
+
+        private static Vector3[] World(SkinnedMeshRenderer smr, Mesh mesh)
+        {
+            Transform t = smr.transform;
+            Vector3[] raw = mesh.vertices;
+            var w = new Vector3[raw.Length];
+            Vector3 pos = t.position, sc = t.lossyScale; Quaternion rot = t.rotation;
+            for (int i = 0; i < raw.Length; i++) w[i] = pos + rot * Vector3.Scale(sc, raw[i]);
+            return w;
+        }
+
+        /// <summary>Exact outline of her torso at one height: every triangle edge the plane crosses. Coordinates along right and fwd from origin.</summary>
+        private List<System.Numerics.Vector2> Cut(Vector3[] w, int[] tris, Vector3 origin, Vector3 up, Vector3 right, Vector3 fwd, bool[] skip = null)
+        {
+            var o = new List<System.Numerics.Vector2>();
+            void Edge(int a, int b, float da, float db)
             {
-                Vector3 q = p - mid;
-                float y = Vector3.Dot(q, up) - h0, x = Vector3.Dot(q, right), z = Vector3.Dot(q, fwd);
-                if (Mathf.Abs(y) <= half && Mathf.Abs(x - a.X) <= a.W * 0.75f) pts.Add(new System.Numerics.Vector2(x, z));
+                if ((da > 0) == (db > 0)) return;
+                Vector3 p = w[a] + (w[b] - w[a]) * (da / (da - db)) - origin;
+                o.Add(new System.Numerics.Vector2(Vector3.Dot(p, right), Vector3.Dot(p, fwd)));
             }
-            var shape = BeltShape.From(pts, 0.003f);
-            if (shape == null) return;
-            _shape = shape; _beltTall = sy; _beltThick = sy; _lowerScale = sy;
-            _waist = new Vector3(0f, h0, 0f);
-            var warped = new Vector3[_beltRest.Length];
-            for (int i = 0; i < warped.Length; i++) warped[i] = U(_shape.Warp(new NVector3(_beltRest[i].x, _beltRest[i].y, _beltRest[i].z), BeltInX, BeltInZ, BeltY, _beltTall, _beltThick));
-            _beltMesh.vertices = warped;
+            for (int i = 0; i < tris.Length; i += 3)
+            {
+                int a = tris[i], b = tris[i + 1], c = tris[i + 2];
+                if (skip != null && (skip[a] || skip[b] || skip[c])) continue;
+                float da = Vector3.Dot(w[a] - origin, up), db = Vector3.Dot(w[b] - origin, up), dc = Vector3.Dot(w[c] - origin, up);
+                if ((da > 0 && db > 0 && dc > 0) || (da < 0 && db < 0 && dc < 0)) continue;
+                Edge(a, b, da, db); Edge(b, c, db, dc); Edge(c, a, dc, da);
+            }
+            return o;
+        }
+
+        /// <summary>onPreCull: size the belt from the skin as drawn, in the frame of the bones as drawn, the same ones it is then placed on.</summary>
+        private void Measure(Animator anim)
+        {
+            Transform B(HumanBodyBones b) => anim.GetBoneTransform(b);
+            var smr = HarnessController.FindBody(anim);
+            if (smr == null || _arm == null) return;
+            var w = Bake(smr, out int[] tris);
+            if (w.Length != _arm.Length) return;
+            Vector3 hl = B(HumanBodyBones.LeftUpperLeg).position, hr = B(HumanBodyBones.RightUpperLeg).position, mid = (hl + hr) * 0.5f, chest = B(HumanBodyBones.Chest).position;
+            Vector3 kl = B(HumanBodyBones.LeftLowerLeg).position, kr = B(HumanBodyBones.RightLowerLeg).position;
+            Vector3 right = (hr - hl).normalized, up = Vector3.ProjectOnPlane(chest - mid, right).normalized, fwd = Vector3.Cross(right, up);
+            float top = Vector3.Dot(chest - mid, up), h0 = top * Plugin.BeltHeight.Value;
+            var cm = Cut(w, tris, mid + up * h0, up, right, fwd, _arm);
+            if (cm.Count < 8) return;
+            float x0 = 9, x1 = -9, z0 = 9, z1 = -9;
+            foreach (var p in cm) { x0 = Mathf.Min(x0, p.X); x1 = Mathf.Max(x1, p.X); z0 = Mathf.Min(z0, p.Y); z1 = Mathf.Max(z1, p.Y); }
+            float sx0 = 9, sx1 = -9, sz0 = 9, sz1 = -9;   // hardware size belongs to her, not to where the belt happens to sit
+            foreach (var p in Cut(w, tris, mid + up * (top * WaistShare), up, right, fwd, _arm)) { sx0 = Mathf.Min(sx0, p.X); sx1 = Mathf.Max(sx1, p.X); sz0 = Mathf.Min(sz0, p.Y); sz1 = Mathf.Max(sz1, p.Y); }
+            float size = ((sx1 - sx0) / 2 / BeltInX + (sz1 - sz0) / 2 / BeltInZ) / 2, sy = size * Plugin.Size.Value, half = BeltHalf * sy;
+            var centre = new System.Numerics.Vector2((x0 + x1) / 2, (z0 + z1) / 2);
+            var lower = Cut(w, tris, mid + up * (h0 - half), up, right, fwd, _arm); var upper = Cut(w, tris, mid + up * (h0 + half), up, right, fwd, _arm);
+            var band = BeltBand.From(lower, cm, upper, centre, 0.0015f, _modelInner);
+            if (band == null) return;
+            _band = band; _beltTall = sy; _beltThick = sy; _lowerScale = sy;
+            // the belt rides between hips and spine, like the skin under it
+            Quaternion rot = Quaternion.LookRotation(fwd, up); Vector3 at = mid + up * h0 + right * 0f;
+            Transform hb = B(HumanBodyBones.Hips), sb = B(HumanBodyBones.Spine);
+            _lh = Quaternion.Inverse(hb.rotation) * (at - hb.position); _qh = Quaternion.Inverse(hb.rotation) * rot;
+            _ls = Quaternion.Inverse(sb.rotation) * (at - sb.position); _qs = Quaternion.Inverse(sb.rotation) * rot;
+            // the band is a model of the belt; the mesh is what she wears. Check the mesh against her skin and push out wherever it falls short:
+            // straight mesh edges cut the corners of her outline, most of all at her sides.
+            _beltHalf = half; _lifted = new float[BeltBand.Bins]; _settled = 0; _nextSettle = Time.time + 1f;
+            var near = new List<int>();
+            for (int i = 0; i < tris.Length; i += 3)
+            {
+                int a = tris[i], b = tris[i + 1], c = tris[i + 2];
+                if (_arm[a] || _arm[b] || _arm[c] || Mathf.Abs(Vector3.Dot(w[a] - at, up)) > 0.12f) continue;
+                near.Add(a); near.Add(b); near.Add(c);
+            }
+            _waistTris = near.ToArray();
+            Refit();
+            for (int pass = 0; pass < 3; pass++) if (!Push(SkinNow(w, at, up, right, fwd))) break;
+            _thighLength = (kl - hl).magnitude;
+            FitThigh(_hoopFitL, w, hl, kl, hr, kr, _hipL, _hoopL, rot, sy);
+            FitThigh(_hoopFitR, w, hr, kr, hl, kl, _hipR, _hoopR, rot, sy);
+            _driveF.Reset(); _driveR.Reset();
+            _needMeasure = false; _fits++; _wantBow = true;
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: waist at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", " + (x1 - x0).ToString("0.000") + " x " + (z1 - z0).ToString("0.000") + ", band height " + (half * 2).ToString("0.000") + ", size " + sy.ToString("0.00"));
+        }
+
+        /// <summary>
+        /// The check that counts, and it shares nothing with the fit: the real belt mesh where it is drawn now, cut at five heights, against her skin
+        /// as drawn now, cut at the same heights. Negative means skin through the belt. Only gaps are logged, never her outline.
+        /// </summary>
+        private void GapReport(Animator anim)
+        {
+            var smr = HarnessController.FindBody(anim);
+            if (smr == null || _arm == null || _band == null) return;
+            var w = Bake(smr, out int[] tris);
+            Quaternion rot = _belt.rotation; Vector3 pos = _belt.position, up = rot * Vector3.up, right = rot * Vector3.right, fwd = rot * Vector3.forward;
+            Vector3[] bl = _beltMesh.vertices; int[] bt = _beltMesh.triangles;
+            for (int i = 0; i < bl.Length; i++) bl[i] = _belt.TransformPoint(bl[i]);
+            float half = BeltHalf * _beltTall * 0.92f;
+            var marks = new List<Vector3>();
+            var sb = new System.Text.StringBuilder("[SFM-ACCEPT] gap:"); var bins = new System.Text.StringBuilder("[SFM-ACCEPT] gapbins");
+            foreach (float h in new[] { -1f, -0.5f, 0f, 0.5f, 1f })
+            {
+                Vector3 o = pos + up * (h * half);
+                float[] skin, belt;
+                var cut = Cut(w, tris, o, up, right, fwd, _arm);
+                skin = Bins(cut, true); belt = Bins(Cut(bl, bt, o, up, right, fwd), false);
+                if (ShowMarkers) foreach (var p in cut) marks.Add(o + right * p.X + fwd * p.Y);
+                float min = 9f, sum = 0f, worst = 0f; int n = 0, under = 0;
+                bins.Append(" |").Append(h.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+                for (int i = 0; i < BeltBand.Bins; i++)
+                {
+                    if (skin[i] <= 0f || belt[i] > 8f) { bins.Append(" x"); continue; }
+                    float g = belt[i] - skin[i];
+                    bins.Append(' ').Append(Mathf.RoundToInt(g * 10000f));
+                    n++; sum += g; if (g < 0f) under++;
+                    if (g < min) { min = g; worst = i * 360f / BeltBand.Bins; }
+                }
+                sb.Append(" h").Append(h.ToString("+0.0;-0.0")).Append(": min ").Append((min * 1000).ToString("0.0")).Append(" at ").Append(worst.ToString("0")).Append(", mean ").Append((sum / Mathf.Max(n, 1) * 1000).ToString("0.0")).Append(", through ").Append(under).Append("/").Append(n).Append(";");
+            }
+            Plugin.Logger.LogInfo(sb.ToString()); Plugin.Logger.LogInfo(bins.ToString());
+            if (_markers != null) { UnityEngine.Object.Destroy(_markers); _markers = null; }
+            if (ShowMarkers && marks.Count > 0) { _markers = MarkerObject(marks); _markers.transform.SetParent(_belt, true); }   // she sways; the marks ride with the belt
+        }
+
+        private static readonly float[] Heights = { -0.92f, -0.5f, 0f, 0.5f, 0.92f };
+
+        private float[][] SkinNow(Vector3[] w, Vector3 at, Vector3 up, Vector3 right, Vector3 fwd)
+        {
+            var o = new float[Heights.Length][];
+            for (int k = 0; k < o.Length; k++) o[k] = Bins(Cut(w, _waistTris, at + up * (Heights[k] * _beltHalf), up, right, fwd), true);
+            return o;
+        }
+
+        /// <summary>Shapes the mesh from the band, and notes where its inside really is, by angle and height, in the belt's own frame.</summary>
+        private void Refit()
+        {
+            var v = new Vector3[_beltRest.Length];
+            for (int i = 0; i < v.Length; i++) v[i] = U(_band.Warp(new NVector3(_beltRest[i].x, _beltRest[i].y, _beltRest[i].z), BeltY, BeltHalf, _beltTall, _beltThick));
+            _beltMesh.vertices = v;
             _beltMesh.RecalculateNormals();
             _beltMesh.RecalculateBounds();
-            _thighLength = (kl - hl).magnitude;
-            Quaternion rotS = Quaternion.LookRotation(fwd, up);
-            FitThigh(_hoopFitL, w, hl, kl, hr, kr, _hipL, _hoopL, rotS, sy);
-            FitThigh(_hoopFitR, w, hr, kr, hl, kl, _hipR, _hoopR, rotS, sy);
-            _driveF.Reset(); _driveR.Reset();
-            _needSurvey = false; _fits++;
-            float r0 = _shape.At(0f), r90 = _shape.At(Mathf.PI / 2), r180 = _shape.At(Mathf.PI), r270 = _shape.At(-Mathf.PI / 2);
-            Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: waist at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", outline front " + r0.ToString("0.000") + " right " + r90.ToString("0.000") + " back " + r180.ToString("0.000") + " left " + r270.ToString("0.000") + ", centre " + _shape.CentreX.ToString("0.000") + "," + _shape.CentreZ.ToString("0.000") + ", size " + sy.ToString("0.00") + ", thigh radii " + _hoopFitL.Shape?.At(0f).ToString("0.000") + " " + _hoopFitL.Shape?.At(Mathf.PI / 2).ToString("0.000") + " / " + _hoopFitR.Shape?.At(0f).ToString("0.000") + " " + _hoopFitR.Shape?.At(Mathf.PI / 2).ToString("0.000"));
+            _beltTris ??= _beltMesh.triangles;
+            _beltBins = new float[Heights.Length][];
+            for (int k = 0; k < Heights.Length; k++) _beltBins[k] = Bins(Cut(v, _beltTris, Vector3.up * (Heights[k] * _beltHalf), Vector3.up, Vector3.right, Vector3.forward), false);
+        }
+
+        /// <summary>
+        /// The band is a model of the belt; the mesh is what she wears. Moves it out wherever the mesh falls short of this skin: straight mesh edges
+        /// cut the corners of her outline, and her skin moves against her bones as she shifts her weight. It only ever loosens, by no more than MaxLift,
+        /// so a deep bend can't balloon it. False when nothing needed doing.
+        /// </summary>
+        private bool Push(float[][] skin)
+        {
+            var need = new float[BeltBand.Bins]; float most = 0f;
+            for (int k = 0; k < skin.Length; k++)
+                for (int i = 0; i < need.Length; i++)
+                    if (skin[k][i] > 0f && _beltBins[k][i] < 8f && skin[k][i] < _beltBins[k][i] + 0.03f) need[i] = Mathf.Max(need[i], Clear - (_beltBins[k][i] - skin[k][i]));
+            for (int i = 0; i < need.Length; i++)
+            {
+                need[i] = Mathf.Clamp(need[i], 0f, MaxLift - _lifted[i]);
+                _lifted[i] += need[i]; most = Mathf.Max(most, need[i]);
+            }
+            if (most < 0.0005f) return false;
+            _band.Lift(need);
+            Refit();
+            return true;
+        }
+
+        /// <summary>A look at her skin now and then. Often at first and while it keeps finding something, then rarely.</summary>
+        private void Settle(Animator anim)
+        {
+            if (Time.time < _nextSettle || _waistTris == null) return;
+            var smr = HarnessController.FindBody(anim);
+            if (smr == null) return;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var w = Bake(smr);
+            float tb = (float)clock.Elapsed.TotalMilliseconds;
+            Quaternion rot = _belt.rotation;
+            var skin = SkinNow(w, _belt.position, rot * Vector3.up, rot * Vector3.right, rot * Vector3.forward);
+            float tc = (float)clock.Elapsed.TotalMilliseconds;
+            bool moved = Push(skin);
+            LookMs = Mathf.Max(LookMs, tc); if (_looks++ % 40 == 0) Plugin.Logger.LogInfo("[SFM-ACCEPT] look: bake " + tb.ToString("0.0") + " cut " + (tc - tb).ToString("0.0") + " slowest " + LookMs.ToString("0.0") + " ms");
+            _settled = moved ? 0 : _settled + 1;
+            _nextSettle = Time.time + (_settled < 20 ? 0.25f : 1.5f);
+            SettleMs = Mathf.Max(SettleMs, (float)clock.Elapsed.TotalMilliseconds);
+            if (moved) { float m = 0f; foreach (float l in _lifted) m = Mathf.Max(m, l); Plugin.Logger.LogInfo("[SFM-ACCEPT] settle: loosened, most " + (m * 1000).ToString("0.0") + " mm, slowest look " + SettleMs.ToString("0.0") + " ms"); }
+        }
+
+        /// <summary>
+        /// A strap lies on her, it doesn't cut straight through her belly. Finds how far under the skin the straight line runs along each strap, and bows
+        /// the strap's mesh out by that much. Ends stay where they are, so the hardware still meets.
+        /// </summary>
+        private void Bow(Animator anim)
+        {
+            var smr = HarnessController.FindBody(anim);
+            if (smr == null) return;
+            var w = Bake(smr, out int[] tris);
+            Quaternion rot = _belt.rotation; Vector3 pos = _belt.position, up = rot * Vector3.up, right = rot * Vector3.right, fwd = rot * Vector3.forward;
+            const int n = 10;
+            var log = new System.Text.StringBuilder("[SFM-ACCEPT] bow:");
+            foreach (var st in _stretches)
+            {
+                if (st.Name != "vstrap_R" && st.Name != "vstrap_L" && st.Name != "rear_strap") continue;
+                Vector3 a = st.T.position, b = a + st.T.rotation * (Vector3.forward * (st.Length * st.T.localScale.z));
+                var bow = new float[n + 2]; Vector3 outward = Vector3.zero; float most = 0f;
+                for (int i = 1; i <= n; i++)
+                {
+                    Vector3 p = a + (b - a) * (i / (n + 1f));
+                    Vector3 c = pos + up * Vector3.Dot(p - pos, up) + right * _band.CentreX + fwd * _band.CentreZ;
+                    float px = Vector3.Dot(p - c, right), pz = Vector3.Dot(p - c, fwd), rp = Mathf.Sqrt(px * px + pz * pz);
+                    if (rp < 0.02f) continue;
+                    float ux = px / rp, uz = pz / rp, rim = 0f;
+                    outward += right * ux + fwd * uz;
+                    foreach (var q in Cut(w, tris, p, up, right, fwd, _arm))
+                    {
+                        float qx = q.X + px, qz = q.Y + pz, along = qx * ux + qz * uz, aside = Mathf.Abs(qx * uz - qz * ux);
+                        if (aside < 0.012f && along > 0f && along < rp + 0.06f) rim = Mathf.Max(rim, along);
+                    }
+                    bow[i] = rim > 0f ? Mathf.Max(0f, rim - rp + 0.003f) : 0f;
+                    most = Mathf.Max(most, bow[i]);
+                }
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    var o = (float[])bow.Clone();
+                    for (int i = 1; i <= n; i++) o[i] = Mathf.Max(bow[i], (bow[i - 1] + bow[i + 1]) / 2);
+                    bow = o;
+                }
+                Vector3 d = (b - a).normalized, lo = Quaternion.Inverse(st.T.rotation) * Vector3.ProjectOnPlane(outward, d).normalized, sc = st.T.localScale;
+                var v = new Vector3[st.Rest.Length];
+                for (int i = 0; i < v.Length; i++)
+                {
+                    float f = Mathf.Clamp01(st.Rest[i].z / st.Length) * (n + 1); int k = Mathf.Min((int)f, n);
+                    float off = Mathf.Lerp(bow[k], bow[k + 1], f - k);
+                    v[i] = st.Rest[i] + new Vector3(lo.x * off / sc.x, lo.y * off / sc.y, lo.z * off / sc.z);
+                }
+                st.Mesh.vertices = v; st.Mesh.RecalculateNormals(); st.Mesh.RecalculateBounds();
+                log.Append(' ').Append(st.Name).Append(' ').Append((most * 1000).ToString("0")).Append(" mm");
+            }
+            Plugin.Logger.LogInfo(log.ToString());
+        }
+
+        /// <summary>Radius by angle about the band's centre: the outermost point in each bin, or the innermost.</summary>
+        private float[] Bins(List<System.Numerics.Vector2> pts, bool outer)
+        {
+            var o = new float[BeltBand.Bins];
+            if (!outer) for (int i = 0; i < o.Length; i++) o[i] = 9f;
+            foreach (var p in pts)
+            {
+                float dx = p.X - _band.CentreX, dz = p.Y - _band.CentreZ, r = Mathf.Sqrt(dx * dx + dz * dz); int b = BeltBand.Bin(Mathf.Atan2(dx, dz));
+                o[b] = outer ? Mathf.Max(o[b], r) : Mathf.Min(o[b], r);
+            }
+            return o;
+        }
+
+        /// <summary>Tiny bright cubes on the outline measured: if they sit on her skin in a screenshot, the data matches what is drawn.</summary>
+        private GameObject MarkerObject(List<Vector3> pts)
+        {
+            float e = 0.0016f;
+            var v = new List<Vector3>(); var t = new List<int>();
+            foreach (var p in pts)
+            {
+                int b = v.Count;
+                for (int i = 0; i < 8; i++) v.Add(p + new Vector3((i & 1) == 0 ? -e : e, (i & 2) == 0 ? -e : e, (i & 4) == 0 ? -e : e));
+                foreach (int k in new[] { 0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5 }) t.Add(b + k);
+            }
+            var m = new Mesh { name = Tag + "Markers", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+            m.vertices = v.ToArray(); m.triangles = t.ToArray(); m.RecalculateNormals(); m.RecalculateBounds();
+            var go = new GameObject("Markers");
+            go.layer = _top.layer;
+            go.AddComponent<MeshFilter>().sharedMesh = m;
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterial = _markerMat; r.allowOcclusionWhenDynamic = false;
+            UnityEngine.Object.DontDestroyOnLoad(go);
+            return go;
         }
 
         private static float SegDist(Vector3 p, Vector3 a, Vector3 b)
@@ -348,12 +606,14 @@ namespace Harness
             Vector3 hl = B(HumanBodyBones.LeftUpperLeg).position, hr = B(HumanBodyBones.RightUpperLeg).position, mid = (hl + hr) * 0.5f;
             Vector3 kl = B(HumanBodyBones.LeftLowerLeg).position, kr = B(HumanBodyBones.RightLowerLeg).position;
             // measured twice just after it goes on (bones settle after a load), then again only when her size changes
-            if (Time.time >= _nextFit && (_fits < 2 || Mathf.Abs((kl - hl).magnitude - _thighLength) > 0.02f * _thighLength)) { _needSurvey = true; _nextFit = Time.time + 2f; }
-            if (_shape == null) return;
+            if (Time.time >= _nextFit && (_fits < 2 || Mathf.Abs((kl - hl).magnitude - _thighLength) > 0.02f * _thighLength)) { _needMeasure = true; _nextFit = Time.time + 2f; }
+            if (_needMeasure) Measure(anim);
+            if (_band == null) return;
             Vector3 right = (hr - hl).normalized, up = Vector3.ProjectOnPlane(B(HumanBodyBones.Spine).position - mid, right).normalized;
             Vector3 fwd = Vector3.Cross(right, up);
             Quaternion rot = Quaternion.LookRotation(fwd, up);
-            _belt.SetPositionAndRotation(mid + rot * new Vector3(0f, _waist.y, 0f), rot);
+            Transform hb = B(HumanBodyBones.Hips), sb = B(HumanBodyBones.Spine);
+            _belt.SetPositionAndRotation(Vector3.Lerp(hb.position + hb.rotation * _lh, sb.position + sb.rotation * _ls, 0.5f), Quaternion.Slerp(hb.rotation * _qh, sb.rotation * _qs, 0.5f));
             float ls = _lowerScale * Plugin.ScaleTrim.Value;
             PlaceGuides(anim, rot, ls);
             PlaceThigh(_thighL, hl, kl, _hipL, _hoopL, rot);
@@ -390,11 +650,15 @@ namespace Harness
                 st.T.SetPositionAndRotation(a, Quaternion.LookRotation(d, rot * st.Hint));
                 st.T.localScale = new Vector3(ls, ls, d.magnitude / st.Length);
             }
+            if (_wantBow) { _wantBow = false; Bow(anim); }
+            Settle(anim);
+            if (WatchUntil > Time.time && Time.time >= _nextWatch) { _nextWatch = Time.time + 0.2f; WantGap = true; }
+            if (WantGap) { WantGap = false; GapReport(anim); }
             Status = "size " + ls.ToString("0.00") + " stroke " + _driveF.Stroke.ToString("0.00") + " " + _driveR.Stroke.ToString("0.00") + " cord " + cordF.ToString("0.000") + " of " + restF.ToString("0.000") + ", " + cordR.ToString("0.000") + " of " + restR.ToString("0.000");
         }
 
         private Vector3 Point(Transform node, Vector3 model, Vector3 origin) =>
-            node == _belt ? _belt.TransformPoint(U(_shape.Warp(new NVector3(model.x, model.y, model.z), BeltInX, BeltInZ, BeltY, _beltTall, _beltThick)))
+            node == _belt ? _belt.TransformPoint(U(_band.Warp(new NVector3(model.x, model.y, model.z), BeltY, BeltHalf, _beltTall, _beltThick)))
             : node == _thighL ? node.TransformPoint(_hoopFitL.Local(model - origin)) : node == _thighR ? node.TransformPoint(_hoopFitR.Local(model - origin)) : node.TransformPoint(model - origin);
 
         /// <summary>
@@ -468,7 +732,7 @@ namespace Harness
             if (_top != null) UnityEngine.Object.Destroy(_top);
             _top = null;
             foreach (var o in _owned) if (o != null) UnityEngine.Object.Destroy(o);
-            _owned.Clear(); _own.Clear(); _stretches.Clear(); _anchorF = null; _shape = null; _hoopFitL.Shape = null; _hoopFitR.Shape = null;
+            _owned.Clear(); _own.Clear(); _stretches.Clear(); _anchorF = null; _band = null; if (_markers != null) UnityEngine.Object.Destroy(_markers); _markers = null; _hoopFitL.Shape = null; _hoopFitR.Shape = null;
             _visible = false;
         }
     }
