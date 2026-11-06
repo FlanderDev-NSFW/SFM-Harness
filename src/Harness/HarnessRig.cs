@@ -733,7 +733,7 @@ namespace Harness
                     if (Mathf.Abs(Vector3.Dot(p - o, up)) > 0.002f) continue;
                     float dx = Vector3.Dot(p - pos, right) - _band.CentreX, dz = Vector3.Dot(p - pos, fwd) - _band.CentreZ, r = Mathf.Sqrt(dx * dx + dz * dz); int b = BeltBand.Bin(Mathf.Atan2(dx, dz));
                     skinDeep = Mathf.Max(skinDeep, skin[b] - r);
-                    if (h < -0.0272f * _beltTall) beltDeep = Mathf.Max(beltDeep, belt[b] - r);
+                    if (h < -0.0335f * _beltTall) beltDeep = Mathf.Max(beltDeep, belt[b] - r);
                 }
             }
             return side + " skin " + (skinDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " belt " + (beltDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
