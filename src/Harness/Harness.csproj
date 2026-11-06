@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$(RepoRoot)build\SfmMod.props" />
+
+  <PropertyGroup>
+    <AssemblyName>Harness</AssemblyName>
+    <RootNamespace>Harness</RootNamespace>
+    <Version>0.1.0</Version>
+    <Description>Harness - SecretFlasherManaka BepInEx IL2CPP mod</Description>
+    <!-- Compiles against RestraintHub (build/SfmMod.targets); players install it separately. -->
+    <SfmUsesRestraintHub>true</SfmUsesRestraintHub>
+  </PropertyGroup>
+
+  <!-- Compile the shared SfmKit sources into this DLL (remove this line if you do not use it). -->
+  <Import Project="$(RepoRoot)build\SfmKit.props" />
+  <Import Project="$(RepoRoot)build\SfmMod.targets" />
+</Project>
