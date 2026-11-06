@@ -51,6 +51,8 @@ namespace Harness
         private int _fits;
         private bool _visible;
         public string Status = "";
+        /// <summary>Diagnostics: 0 to 1 holds both pistons at that travel; below 0 is normal. Never saved.</summary>
+        public static float ForcedStroke = -1f;
 
         public HarnessRig(HarnessFile file) { _file = file; }
 
@@ -368,7 +370,7 @@ namespace Harness
             float restF = (rAL - rER).magnitude + (rER - eyeF0).magnitude, restR = (rAR - rEL).magnitude + (rEL - eyeR0).magnitude;
             _driveF.Update(cordF, restF, thigh, dt);
             _driveR.Update(cordR, restR, thigh, dt);
-            float force = Plugin.ForceStroke.Value;
+            float force = ForcedStroke;
             _pistonF.localPosition = -_axisF * ((force >= 0f ? force : _driveF.Stroke) * StrokeMetres);
             _pistonR.localPosition = -_axisR * ((force >= 0f ? force : _driveR.Stroke) * StrokeMetres);
             Vector3 eyeF = _pistonF.TransformPoint(Sock("SOCKET_cord_front") - _cF), eyeR = _pistonR.TransformPoint(Sock("SOCKET_cord_rear") - _cR);

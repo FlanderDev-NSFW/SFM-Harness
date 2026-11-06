@@ -150,7 +150,7 @@ namespace Harness
 
         public static string PutOnNow() => Instance == null ? "no controller" : Instance.PutOn() ?? Instance.Machine.State.ToString();
 
-        public static string Stroke(string v) { Plugin.ForceStroke.Value = float.Parse(v, System.Globalization.CultureInfo.InvariantCulture); return "stroke " + v; }
+        public static string Stroke(string v) { HarnessRig.ForcedStroke = float.Parse(v, System.Globalization.CultureInfo.InvariantCulture); return "stroke " + v; }
 
         public static string TakeOffNow() { Instance?.TakeOff(); return "off"; }
 
