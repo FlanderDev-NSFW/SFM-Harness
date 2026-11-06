@@ -1123,7 +1123,7 @@ namespace Harness
         /// </summary>
         private sealed class Tab
         {
-            public const int Ctrl = 9, Per = 3, Rings = (Ctrl - 1) * Per + 1;
+            public const int Ctrl = 11, Per = 3, Rings = (Ctrl - 1) * Per + 1;
             public readonly Mesh Mesh; public readonly Vector3[] V = new Vector3[Rings * 4];
             public Tab(Material brown, int layer, Transform parent, List<UnityEngine.Object> owned)
             {
@@ -1151,21 +1151,24 @@ namespace Harness
             Vector3 centre = _belt.position + _belt.rotation * new Vector3(_band.CentreX, 0f, _band.CentreZ), beltUp = _belt.rotation * Vector3.up;
             Vector3 outward = Vector3.ProjectOnPlane(p - centre, beltUp).normalized, face = Vector3.Cross(bar, pull).normalized;
             if (Vector3.Dot(face, outward) < 0f) face = -face;
-            top += outward * (0.0045f * ls); mid += outward * (0.0035f * ls);   // on top of the belt's strap, under the rivets
+            Vector3 rivet = Point(_belt, Sock("SOCKET_chape_rivet_" + side), Vector3.zero);
+            top += outward * (0.0045f * ls); rivet += outward * (0.0042f * ls); mid += outward * (0.0035f * ls);   // on top of the belt's strap, under the rivets
             float thick = 0.0018f * ls, rho = 0.0016f * ls + thick / 2 + 0.0002f, half = 0.0052f * ls, back = thick * 1.3f;
             // the middle of the tab leans towards the pull; the rivets hold its top end
-            Vector3 lean = Vector3.ProjectOnPlane(pull, beltUp) * ((mid - p).magnitude * 0.45f);
+            Vector3 lean = Vector3.ProjectOnPlane(pull, beltUp) * ((mid - p).magnitude * 0.3f);
             var c = new NVector3[Tab.Ctrl];
             void Set(int i, Vector3 v) => c[i] = new NVector3(v.x, v.y, v.z);
-            Set(0, top); Set(1, mid + Vector3.ProjectOnPlane(lean, outward));
-            for (int i = 0; i < 5; i++) { float a = i * Mathf.PI / 4f; Set(2 + i, p + (face * Mathf.Cos(a) + pull * Mathf.Sin(a)) * rho); }
-            Set(7, mid + Vector3.ProjectOnPlane(lean, outward) - outward * back); Set(8, top - outward * back);
+            // from the top to the rivets it stays flat on the belt; only the free part below them moves
+            Vector3 free = mid + Vector3.ProjectOnPlane(lean, outward);
+            Set(0, top); Set(1, rivet); Set(2, free);
+            for (int i = 0; i < 5; i++) { float a = i * Mathf.PI / 4f; Set(3 + i, p + (face * Mathf.Cos(a) + pull * Mathf.Sin(a)) * rho); }
+            Set(8, free - outward * back); Set(9, rivet - outward * back); Set(10, top - outward * back);
             var line = WirePath.Smooth(c, Tab.Per);
-            Vector3 across = Vector3.Cross(beltUp, outward).normalized; if (Vector3.Dot(across, bar) < 0f) across = -across;
+            Vector3 across = Vector3.Cross(top - rivet, outward).normalized; if (Vector3.Dot(across, bar) < 0f) across = -across;
             for (int r = 0; r < line.Length; r++)
             {
                 Vector3 q = U(line[r]), d = (U(line[Mathf.Min(r + 1, line.Length - 1)]) - U(line[Mathf.Max(r - 1, 0)])).normalized;
-                float f = Mathf.Clamp01(Mathf.Min(r, line.Length - 1 - r) / (float)(Tab.Per * 2));
+                float f = Mathf.Clamp01((Mathf.Min(r, line.Length - 1 - r) - Tab.Per) / (float)(Tab.Per * 2));
                 Vector3 wide = Vector3.Lerp(across, bar, f).normalized, n = Vector3.Cross(d, wide).normalized;
                 wide = Vector3.Cross(n, d).normalized;
                 tab.V[r * 4] = q + wide * half + n * (thick / 2); tab.V[r * 4 + 1] = q - wide * half + n * (thick / 2);
