@@ -510,7 +510,9 @@ namespace Harness
             _pathF = Trace(w, tris, hips, _guideF.TransformPoint(Sock("SOCKET_link_f0") - _cF), pos, 1f, 0.03f * gs, 0.03f * gs, 0.002f + 0.006f * gs, right, up, fwd, mid);
             _pathR = Trace(w, tris, hips, _guideR.TransformPoint(Sock("SOCKET_link_r0") - _cR), pos, -1f, 0.012f * gs, 0.03f * gs, 0.002f + 0.004f * gs, right, up, fwd, mid);
             float gsn = _guideF.lossyScale.x;
-            _reachF = Snug(w, _anchorF.position, -_axisObjF.forward, gsn); _reachR = Snug(w, _anchorR.position, -_axisObjR.forward, gsn);
+            // her skin as drawn is what counts, unless her thighs are closed over the axis in this pose; then the same seat with her legs apart, which sits lower, is the limit
+            float drawn = SeatOnAxis(w, _anchorF.position, -_axisObjF.forward, gsn), apart = SeatOnAxis(LegsApart(anim, smr, up, right), _anchorF.position, -_axisObjF.forward, gsn);
+            _reachF = (drawn > -8f ? Mathf.Min(drawn, apart) : apart) + Plugin.FrontSeat.Value * 0.001f; _reachR = Snug(w, _anchorR.position, -_axisObjR.forward, gsn);
             Plugin.Logger.LogInfo("[SFM-ACCEPT] snug: front " + (_reachF * 1000).ToString("0.0") + " rear " + (_reachR * 1000).ToString("0.0") + " mm out from the anchors; model units " + (_reachF / gsn).ToString("0.0000") + " " + (_reachR / gsn).ToString("0.0000"));
             const int n = 10;
             var log = new System.Text.StringBuilder("[SFM-ACCEPT] bow:");
@@ -932,6 +934,54 @@ namespace Harness
         /// How far out along its axis a guide sits so its band rests on her: the skin nearest the outside, inside most of the band's width, against the band's upper edge.
         /// The rim itself may touch skin to the sides, so the outer quarter doesn't count.
         /// </summary>
+        /// <summary>Her skin for one moment with her legs apart. The front axis runs out between her thighs, and whether they touch it depends on the pose she happens to be in.</summary>
+        private Vector3[] LegsApart(Animator anim, SkinnedMeshRenderer smr, Vector3 up, Vector3 right)
+        {
+            Transform l = anim.GetBoneTransform(HumanBodyBones.LeftUpperLeg), r = anim.GetBoneTransform(HumanBodyBones.RightUpperLeg);
+            Transform lk = anim.GetBoneTransform(HumanBodyBones.LeftLowerLeg), rk = anim.GetBoneTransform(HumanBodyBones.RightLowerLeg);
+            Quaternion sl = l.localRotation, sr = r.localRotation;
+            float side = Mathf.Sign(Vector3.Dot(r.position - l.position, right));
+            try
+            {
+                Aim(l, lk, l.position + (-up - right * side * 0.6f));
+                Aim(r, rk, r.position + (-up + right * side * 0.6f));
+                return Bake(smr, out _);
+            }
+            finally { l.localRotation = sl; r.localRotation = sr; }
+        }
+
+        /// <summary>
+        /// The front seat. Her surface slopes across the ring there, so resting the ring on its lowest skin leaves it hanging clear with the shaft showing. Instead
+        /// the band's upper edge meets the middle height of the skin round it, so one side beds in a little and the other stands a little clear.
+        /// </summary>
+        private float SeatOnAxis(Vector3[] w, Vector3 anchor, Vector3 u, float ps)
+        {
+            float rb = 0.0465f * ps;
+            Vector3 e1 = Vector3.Cross(u, Vector3.right).normalized, e2 = Vector3.Cross(u, e1);
+            var ring = new float[12];
+            for (int i = 0; i < ring.Length; i++) ring[i] = 9f;
+            for (int i = 0; i < w.Length; i++)
+            {
+                if (_arm[i]) continue;
+                Vector3 p = w[i] - anchor; float z = Vector3.Dot(p, u);
+                if (z < -0.08f || z > 0.08f) continue;
+                Vector3 q = p - u * z; float r = q.magnitude;
+                if (r < rb * 0.6f || r > rb) continue;
+                float a = Mathf.Atan2(Vector3.Dot(q, e2), Vector3.Dot(q, e1));
+                int k = Mathf.Clamp((int)((a + Mathf.PI) / (2f * Mathf.PI) * ring.Length), 0, ring.Length - 1);
+                if (z < ring[k]) ring[k] = z;
+            }
+            var hit = new List<float>();
+            foreach (float z in ring) if (z < 8f) hit.Add(z);
+            if (hit.Count == 0) return -9f;
+            hit.Sort();
+            float median = hit[hit.Count / 2];
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] seat: skin round the band " + (hit[0] * 1000).ToString("0.0") + " to " + (hit[hit.Count - 1] * 1000).ToString("0.0") + ", middle " + (median * 1000).ToString("0.0") + " mm from the anchor");
+            return BandTopOffset(ps) + 0.001f - median;
+        }
+
+        private static float BandTopOffset(float ps) => 0.015f * ps;
+
         private float Snug(Vector3[] w, Vector3 anchor, Vector3 u, float ps)
         {
             float rb = 0.0465f * ps * 0.75f, lowest = 9f, centre = 9f;
