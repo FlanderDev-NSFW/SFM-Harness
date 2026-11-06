@@ -806,23 +806,33 @@ namespace Harness
             }
         }
 
-        /// <summary>The chain from a guide's lug up her body: each piece turns on the bar below it, joints on the path traced along her skin.</summary>
+        /// <summary>
+        /// The chain from a guide's lug up her body. It hinges only on its bars, and they all stay parallel to the lug's bar, so the whole chain lies in one
+        /// plane square to that bar and every wrap sits square on the bars at both its ends. Joints follow the path traced along her skin, flattened into that plane.
+        /// </summary>
         private void LayChain(Transform[] links, string tag, Transform guide, Vector3 c, Vector3[] path, Transform hips, Quaternion rot, float ls)
         {
             int n = links.Length;
+            Vector3 bar = guide.rotation * Vector3.right;
             var joint = new Vector3[n + 1]; var model = new Vector3[n + 1];
             for (int i = 0; i <= n; i++) { model[i] = Sock("SOCKET_link_" + tag + i); joint[i] = guide.TransformPoint(model[i] - c); }
             if (path != null)
             {
                 var lens = new float[n]; var w = new NVector3[path.Length];
                 for (int i = 0; i < n; i++) lens[i] = (model[i + 1] - model[i]).magnitude * ls;
-                for (int i = 0; i < w.Length; i++) { Vector3 p = hips.position + hips.rotation * path[i]; w[i] = new NVector3(p.x, p.y, p.z); }
+                for (int i = 0; i < w.Length; i++)
+                {
+                    Vector3 p = hips.position + hips.rotation * path[i];
+                    p -= bar * Vector3.Dot(p - joint[0], bar);
+                    w[i] = new NVector3(p.x, p.y, p.z);
+                }
                 var j = ChainPath.Walk(w, new NVector3(joint[0].x, joint[0].y, joint[0].z), lens);
                 for (int i = 0; i <= n; i++) joint[i] = U(j[i]);
             }
             for (int i = 0; i < n; i++)
             {
-                links[i].SetPositionAndRotation(joint[i], Quaternion.FromToRotation(rot * (model[i + 1] - model[i]).normalized, (joint[i + 1] - joint[i]).normalized) * rot);
+                Vector3 from = (model[i + 1] - model[i]).normalized, to = Vector3.ProjectOnPlane(joint[i + 1] - joint[i], bar).normalized;
+                links[i].SetPositionAndRotation(joint[i], Quaternion.LookRotation(Vector3.Cross(bar, to), to) * Quaternion.Inverse(Quaternion.LookRotation(Vector3.Cross(Vector3.right, from), from)));
                 links[i].localScale = Vector3.one * ls;
             }
         }
@@ -857,7 +867,7 @@ namespace Harness
             return pts.ToArray();
         }
 
-        private const int WireSides = 6, WirePer = 4, WireCtrl = 9;
+        private const int WireSides = 6, WirePer = 4, WireCtrl = 7;
         private Mesh _wire; private Vector3[] _wireV, _wireN;
 
         private void MakeWire(Material pink, int layer)
@@ -878,19 +888,18 @@ namespace Harness
             var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = pink; mr.allowOcclusionWhenDynamic = false;
         }
 
-        /// <summary>The wire from the capsule's tip: out along the capsule, over the link and trapezoid, up the outside of the right V strap, to the belt keeper.</summary>
+        /// <summary>The wire from the capsule's tip straight to the outside of the right V strap, up it, to the belt keeper.</summary>
         private void DrawWire(Quaternion rot, float ls, float ps)
         {
             var st = _stretches.Find(x => x.Name == "vstrap_R");
-            Vector3 f1 = Sock("SOCKET_link_f1"), along = _linkF[1].rotation * (Sock("SOCKET_link_f2") - f1).normalized, tip = _linkF[1].TransformPoint(Sock("SOCKET_capsule_wire") - f1);
+            Vector3 tip = _linkF[1].TransformPoint(Sock("SOCKET_capsule_wire") - Sock("SOCKET_link_f1"));
             Vector3 over = _linkF[2].rotation * Vector3.forward, top = st.T.position, bottom = top + st.T.rotation * (Vector3.forward * (st.Length * st.T.localScale.z));
             Vector3 face = st.Bow != null ? st.T.rotation * st.Out : over;
             Vector3 OnStrap(float t) => bottom + (top - bottom) * t + face * (st.BowAt(1f - t) + 0.0035f * ls);
             var c = new NVector3[WireCtrl];
             void Set(int i, Vector3 p) => c[i] = new NVector3(p.x, p.y, p.z);
-            Set(0, tip); Set(1, tip + along * (0.014f * ps)); Set(2, _linkF[3].position + over * (0.0095f * ps));
-            Set(3, OnStrap(0.03f)); Set(4, OnStrap(0.3f)); Set(5, OnStrap(0.55f));
-            Set(6, Point(_belt, Sock("SOCKET_wire_belt_a"), Vector3.zero)); Set(7, Point(_belt, Sock("SOCKET_wire_belt_b"), Vector3.zero)); Set(8, Point(_belt, Sock("WIRE_mid"), Vector3.zero));
+            Set(0, tip); Set(1, OnStrap(0.03f)); Set(2, OnStrap(0.3f)); Set(3, OnStrap(0.55f));
+            Set(4, Point(_belt, Sock("SOCKET_wire_belt_a"), Vector3.zero)); Set(5, Point(_belt, Sock("SOCKET_wire_belt_b"), Vector3.zero)); Set(6, Point(_belt, Sock("WIRE_mid"), Vector3.zero));
             var line = WirePath.Smooth(c, WirePer);
             float radius = 0.0016f * ls;
             Vector3 side = rot * Vector3.right;
