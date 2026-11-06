@@ -17,7 +17,7 @@ namespace Harness.Tests
         {
             string file = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Harness", "assets", "harness.hrn"));
             var m = HarnessFile.Read(System.IO.File.OpenRead(file));
-            Check(m.Groups.Count == 26, "26 moving groups");
+            Check(m.Groups.Count == 32, "32 moving groups");
             Check(m.TriangleCount() > 50000, "whole model present");
             Check(m.Sockets.ContainsKey("SOCKET_cord_front") && m.Sockets.ContainsKey("BODY_hoop_R"), "sockets present");
             Check(m.Sockets["BODY_hip_R"].Position.X < 0, "Beta's right is her left: -X in Unity");
@@ -45,6 +45,11 @@ namespace Harness.Tests
             Check(Math.Abs(band.Inside(0f, -1f) - 0.2f) < 0.002f && Math.Abs(band.Inside(0f, 1f) - 0.1f) < 0.002f, "band: edges follow her");
             var band2 = BeltBand.From(ring3, ring, ring3, System.Numerics.Vector2.Zero, 0f, inner);
             Check(band2.Inside(1f, 0f) >= 0.199f, "band: a bulge at mid height lifts the band over it");
+            var bend = new[] { new System.Numerics.Vector3(0, 0, 0), new System.Numerics.Vector3(0, 1, 0), new System.Numerics.Vector3(1, 1, 0) };
+            var jn = ChainPath.Walk(bend, bend[0], new[] { 0.5f, 0.5f, 0.5f, 2f });
+            Check(Math.Abs(jn[1].Y - 0.5f) < 1e-4f && Math.Abs(jn[2].Y - 1f) < 1e-4f, "chain: joints walk up the path");
+            Check(Math.Abs(System.Numerics.Vector3.Distance(jn[2], jn[3]) - 0.5f) < 1e-3f && jn[3].X > 0.4f, "chain: pieces keep their length round a bend");
+            Check(Math.Abs(System.Numerics.Vector3.Distance(jn[3], jn[4]) - 2f) < 1e-3f, "chain: past the end it carries straight on");
             var lift = new float[BeltBand.Bins]; lift[0] = 0.01f; band.Lift(lift);
             Check(Math.Abs(band.Lower[0] - 0.21f) < 0.002f && band.Lower[1] > band.Lower[3], "band: a push out spreads to its neighbours");
             band = BeltBand.From(ring, ring3, ring3, System.Numerics.Vector2.Zero, 0f, inner);

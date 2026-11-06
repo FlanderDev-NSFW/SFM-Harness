@@ -77,7 +77,7 @@ namespace Harness.Logic
     /// <summary>Which rig node a group hangs on. Beta's R side (+X there) is her left.</summary>
     public static class GroupMap
     {
-        public const string Belt = "belt", GuideFront = "guideF", GuideRear = "guideR", LeftThigh = "thighL", RightThigh = "thighR", PistonFront = "pistonF", PistonRear = "pistonR", RearChain = "chain", Own = "own";
+        public const string Belt = "belt", GuideFront = "guideF", GuideRear = "guideR", LeftThigh = "thighL", RightThigh = "thighR", PistonFront = "pistonF", PistonRear = "pistonR", Own = "own";
 
         public static string NodeOf(string group)
         {
@@ -86,7 +86,6 @@ namespace Harness.Logic
             if (group == "guide_rear") return GuideRear;
             if (group == "piston_front") return PistonFront;
             if (group == "piston_rear") return PistonRear;
-            if (group == "rear_chain") return RearChain;
             if (group == "thigh_R") return LeftThigh;
             if (group == "thigh_L") return RightThigh;
             return Own; // rings, cord ends, stretched straps, springs and wire are placed one by one
@@ -252,6 +251,37 @@ namespace Harness.Logic
             float a = MathF.Atan2(v.X, v.Z), sn = v.X / r, cs = v.Z / r, h = (v.Y - beltY) / halfModel;
             float nr = Inside(a, h) + (r - Lerp(Inner, a)) * thick;
             return new Vector3(CentreX + sn * nr, (v.Y - beltY) * tall, CentreZ + cs * nr);
+        }
+    }
+
+    /// <summary>
+    /// A chain of rigid pieces laid along a path: from the start, each joint is the first point on the path one piece's length from the joint before.
+    /// Past the path's end it carries straight on. Returns every joint, the start first.
+    /// </summary>
+    public static class ChainPath
+    {
+        public static Vector3[] Walk(IList<Vector3> path, Vector3 start, IList<float> lengths)
+        {
+            var o = new Vector3[lengths.Count + 1]; o[0] = start;
+            int seg = 0; float best = float.MaxValue;
+            for (int i = 0; i < path.Count; i++) { float d = Vector3.DistanceSquared(path[i], start); if (d < best) { best = d; seg = i; } }
+            for (int k = 0; k < lengths.Count; k++)
+            {
+                Vector3 from = o[k]; float l = lengths[k]; bool found = false;
+                for (int i = seg; i + 1 < path.Count && !found; i++)
+                {
+                    if (Vector3.Distance(path[i + 1], from) < l) continue;
+                    // the far end of this piece of path is past l, so take the far crossing
+                    Vector3 a = path[i], d = path[i + 1] - a, f = a - from;
+                    float A = Vector3.Dot(d, d), B = 2 * Vector3.Dot(f, d), C = Vector3.Dot(f, f) - l * l, disc = B * B - 4 * A * C;
+                    float t = A > 1e-12f && disc >= 0 ? (-B + MathF.Sqrt(disc)) / (2 * A) : 1f;
+                    o[k + 1] = a + d * Math.Clamp(t, 0f, 1f); seg = i; found = true;
+                }
+                if (found) continue;
+                Vector3 dir = path.Count > 1 ? Vector3.Normalize(path[path.Count - 1] - path[path.Count - 2]) : Vector3.UnitY;
+                o[k + 1] = from + dir * l;
+            }
+            return o;
         }
     }
 
