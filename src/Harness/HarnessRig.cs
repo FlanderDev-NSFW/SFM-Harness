@@ -508,7 +508,7 @@ namespace Harness
             Transform hips = anim.GetBoneTransform(HumanBodyBones.Hips);
             float gs = _guideF.lossyScale.x;
             _pathF = Trace(w, tris, hips, _guideF.TransformPoint(Sock("SOCKET_link_f0") - _cF), pos, 1f, 0.03f * gs, 0.002f + 0.006f * gs, right, up, fwd, mid);
-            _pathR = Trace(w, tris, hips, _guideR.TransformPoint(Sock("SOCKET_link_r0") - _cR), pos, -1f, 0.03f * gs, 0.002f + 0.006f * gs, right, up, fwd, mid);
+            _pathR = Trace(w, tris, hips, _guideR.TransformPoint(Sock("SOCKET_link_r0") - _cR), pos, -1f, 0.012f * gs, 0.002f + 0.004f * gs, right, up, fwd, mid);
             const int n = 10;
             var log = new System.Text.StringBuilder("[SFM-ACCEPT] bow:");
             foreach (var st in _stretches)
@@ -633,7 +633,8 @@ namespace Harness
             Vector3 up = rot * Vector3.up, right = rot * Vector3.right, fwd = rot * Vector3.forward, o = _belt.position + right * _band.CentreX;
             const float step = 0.004f;
             var skin = new Dictionary<int, float>();
-            foreach (float x in new[] { -0.012f, 0f, 0.012f })
+            float half = side > 0f ? 0.012f : 0.005f;
+            foreach (float x in new[] { -half, 0f, half })
                 foreach (var q in Cut(w, tris, o + right * x, right, up, fwd, _arm))
                 {
                     int b = Mathf.RoundToInt(q.X / step); float f = q.Y * side;
@@ -647,7 +648,7 @@ namespace Harness
                     foreach (var v in mf.sharedMesh.vertices)
                     {
                         Vector3 p = mf.transform.TransformPoint(v) - o;
-                        if (Mathf.Abs(Vector3.Dot(p, right)) > 0.014f || !skin.TryGetValue(Mathf.RoundToInt(Vector3.Dot(p, up) / step), out float sk)) continue;
+                        if (Mathf.Abs(Vector3.Dot(p, right)) > half + 0.002f || !skin.TryGetValue(Mathf.RoundToInt(Vector3.Dot(p, up) / step), out float sk)) continue;
                         deep = Mathf.Max(deep, sk - Vector3.Dot(p, fwd) * side);
                     }
                 sb.Append(' ').Append(t.name).Append(' ').Append((deep * 1000).ToString("0"));

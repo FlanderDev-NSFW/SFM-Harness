@@ -272,7 +272,7 @@ namespace Harness.Logic
                 for (int i = seg; i + 1 < path.Count; i++)
                 {
                     Vector3 end = path[i + 1];
-                    if (Vector3.Distance(end, from) < l || Vector3.Dot(end - from, way) < 0.6f * l) continue;
+                    if (Vector3.Distance(end, from) < l || Vector3.Dot(end - from, way) < 0.3f * l) continue;
                     Vector3 a = path[i], d = end - a, f = a - from;
                     float A = Vector3.Dot(d, d), B = 2 * Vector3.Dot(f, d), C = Vector3.Dot(f, f) - l * l, disc = B * B - 4 * A * C;
                     float t = A > 1e-12f && disc >= 0 ? (-B + MathF.Sqrt(disc)) / (2 * A) : 1f;
