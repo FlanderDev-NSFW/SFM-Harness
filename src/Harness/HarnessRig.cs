@@ -49,6 +49,7 @@ namespace Harness
         private Transform _belt, _guideF, _guideR, _thighL, _thighR, _pistonF, _pistonR, _anchorF, _anchorR, _axisObjF, _axisObjR;
         private readonly Transform[] _linkF = new Transform[4], _linkR = new Transform[3];
         private Vector3[] _pathF, _pathR;
+        private Transform _ringR, _ringL; private float _ringLiftR, _ringLiftL;
         private Mesh _beltMesh; private Vector3[] _beltRest; private BeltBand _band; private float _beltTall = 1f, _beltThick = 1f; private float[] _modelInner;
         private bool[] _arm; private Vector3 _lh, _ls; private Quaternion _qh, _qs; private GameObject _markers; private Material _markerMat;
         public bool WantGap; public static bool ShowMarkers; public static bool Probe; public float WatchUntil; private float _nextWatch;
@@ -92,10 +93,11 @@ namespace Harness
             var mats = new Material[_file.Materials.Count];
             Material source = FindToon();
             for (int i = 0; i < mats.Length; i++) mats[i] = MakeMaterial(source, _file.Materials[i]);
-            _dev = Node("Device", _thighL);
+            _dev = Node("Device", _thighL); _ringR = Node("RingR", _top.transform); _ringL = Node("RingL", _top.transform);
             var ends = StretchEnds();
             foreach (var g in _file.Groups)
             {
+                if (g.Name.StartsWith("dring_")) { AddGroup(g, g.Name.EndsWith("_R") ? _ringR : _ringL, U(g.Pivot), Quaternion.identity, mats, layer); continue; }
                 if (g.Name.StartsWith("rigid_"))
                 {
                     bool her_left = g.Name == "rigid_dev" || g.Name.EndsWith("_R");   // Beta's R side is her left
@@ -164,8 +166,8 @@ namespace Harness
             var d = new Dictionary<string, Stretch>();
             Stretch S(string a, Transform from, Vector3 fromOrigin, string b, Transform to, Vector3 toOrigin) =>
                 new Stretch { Start = Sock(a), End = Sock(b), Hint = Vector3.forward, From = from, To = to, FromOrigin = fromOrigin, ToOrigin = toOrigin };
-            d["vstrap_R"] = S("SOCKET_vstrap_top_R", _belt, Vector3.zero, "SOCKET_vstrap_bottom_R", _linkF[3], Sock("SOCKET_link_f3"));
-            d["vstrap_L"] = S("SOCKET_vstrap_top_L", _belt, Vector3.zero, "SOCKET_vstrap_bottom_L", _linkF[3], Sock("SOCKET_link_f3"));
+            d["vstrap_R"] = S("SOCKET_vstrap_top_R", _ringR, Sock("SOCKET_chape_R"), "SOCKET_vstrap_bottom_R", _linkF[3], Sock("SOCKET_link_f3"));
+            d["vstrap_L"] = S("SOCKET_vstrap_top_L", _ringL, Sock("SOCKET_chape_L"), "SOCKET_vstrap_bottom_L", _linkF[3], Sock("SOCKET_link_f3"));
             d["rear_strap"] = S("SOCKET_rear_strap_top", _belt, Vector3.zero, "SOCKET_rear_strap_bottom", _linkR[2], Sock("SOCKET_link_r2"));
             d["hinge_link"] = S("SOCKET_hinge_front", _guideF, _cF, "SOCKET_hinge_rear", _guideR, _cR); d["hinge_link"].Hint = Vector3.up;
             d["wire_down"] = S("WIRE_mid", _belt, Vector3.zero, "WIRE_end", _dev, Sock("SOCKET_remote"));
@@ -406,7 +408,7 @@ namespace Harness
                 FitThigh(_hoopFitR, B(HumanBodyBones.RightUpperLeg), B(HumanBodyBones.RightLowerLeg), w, tris, _hipR, _hoopR, rot, sy);
             }
             _driveF.Reset(); _driveR.Reset();
-            _needMeasure = false; _fits++; _wantBow = 3;
+            _needMeasure = false; _fits++; _wantBow = 3; _ringLiftR = _ringLiftL = 0f;
             Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: waist at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", " + (x1 - x0).ToString("0.000") + " x " + (z1 - z0).ToString("0.000") + ", band height " + (half * 2).ToString("0.000") + ", size " + sy.ToString("0.00"));
         }
 
@@ -560,6 +562,8 @@ namespace Harness
             float drawn = SeatOnAxis(w, _anchorF.position, -_axisObjF.forward, gsn), apart = SeatOnAxis(LegsApart(anim, smr, up, right), _anchorF.position, -_axisObjF.forward, gsn);
             _reachF = (drawn > -8f ? Mathf.Min(drawn, apart) : apart) + Plugin.FrontSeat.Value * 0.001f; _reachR = Snug(w, _anchorR.position, -_axisObjR.forward, gsn);
             Plugin.Logger.LogInfo("[SFM-ACCEPT] snug: front " + (_reachF * 1000).ToString("0.0") + " rear " + (_reachR * 1000).ToString("0.0") + " mm out from the anchors; model units " + (_reachF / gsn).ToString("0.0000") + " " + (_reachR / gsn).ToString("0.0000"));
+            _ringLiftR = Mathf.Max(0f, _ringLiftR + RingLift(w, tris, _ringR, "R", _lowerScale, pos, up, right, fwd));
+            _ringLiftL = Mathf.Max(0f, _ringLiftL + RingLift(w, tris, _ringL, "L", _lowerScale, pos, up, right, fwd));
             const int n = 10;
             var log = new System.Text.StringBuilder("[SFM-ACCEPT] bow:");
             foreach (var st in _stretches)
@@ -872,6 +876,7 @@ namespace Harness
             End("end_rear_thigh", seatAR, seatEL, "SOCKET_anchor_R", "SOCKET_eyelet_L", _thighL, ls);
             End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ps);
             End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ps);
+            SwingRing(_ringR, "R", _ringLiftR, rot, ls); SwingRing(_ringL, "L", _ringLiftL, rot, ls);
             foreach (var st in _stretches)
             {
                 Vector3 a = Point(st.From, st.Start, st.FromOrigin), b = Point(st.To, st.End, st.ToOrigin), d = b - a;
@@ -1107,6 +1112,31 @@ namespace Harness
             // thighs closing in at the sides can reach under the ring; they don't push it further out than a little past her middle
             if (centre < 8f) lowest = Mathf.Max(lowest, centre - 0.006f);
             return lowest > 8f ? -9f : 0.015f * ps + 0.001f - lowest;
+        }
+
+        /// <summary>A D-ring hanging from its chape on the belt, pulled towards the trapezoid by the V strap, and held off her skin where the hip widens under it.</summary>
+        private void SwingRing(Transform ring, string side, float lift, Quaternion rot, float ls)
+        {
+            Vector3 chape = Sock("SOCKET_chape_" + side), model = Sock("SOCKET_vstrap_top_" + side) - chape;
+            Vector3 p = Point(_belt, chape, Vector3.zero), pull = _linkF[3].TransformPoint(Sock("SOCKET_vstrap_bottom_" + side) - Sock("SOCKET_link_f3"));
+            Vector3 centre = _belt.position + _belt.rotation * new Vector3(_band.CentreX, 0f, _band.CentreZ), up = _belt.rotation * Vector3.up;
+            Vector3 outward = Vector3.ProjectOnPlane(p - centre, up).normalized, bar = p + (pull - p).normalized * (model.magnitude * ls) + outward * lift;
+            ring.SetPositionAndRotation(p, Quaternion.FromToRotation(rot * model.normalized, (bar - p).normalized) * rot);
+            ring.localScale = Vector3.one * ls;
+        }
+
+        private float RingLift(Vector3[] w, int[] tris, Transform ring, string side, float ls, Vector3 pos, Vector3 up, Vector3 right, Vector3 fwd)
+        {
+            Vector3 bar = ring.TransformPoint(Sock("SOCKET_vstrap_top_" + side) - Sock("SOCKET_chape_" + side));
+            Vector3 c = pos + up * Vector3.Dot(bar - pos, up) + right * _band.CentreX + fwd * _band.CentreZ;
+            float px = Vector3.Dot(bar - c, right), pz = Vector3.Dot(bar - c, fwd), rp = Mathf.Sqrt(px * px + pz * pz), rim = 0f;
+            float ux = px / rp, uz = pz / rp;
+            foreach (var q in Cut(w, tris, bar, up, right, fwd, _arm))
+            {
+                float qx = q.X + px, qz = q.Y + pz, along = qx * ux + qz * uz;
+                if (Mathf.Abs(qx * uz - qz * ux) < 0.012f && along > 0f && along < rp + 0.06f) rim = Mathf.Max(rim, along);
+            }
+            return rim > 0f ? rim - rp + 0.003f : 0f;
         }
 
         private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)
