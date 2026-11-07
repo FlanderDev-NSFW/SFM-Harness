@@ -121,12 +121,6 @@ namespace Harness
             Plugin.Logger.LogInfo("[SFM-ACCEPT] rig: built, " + _file.TriangleCount() + " triangles");
         }
 
-        [HideFromIl2Cpp]
-        internal void OnRingChosen()
-        {
-            string why = PutOn();
-            if (why != null) Hub.Message("Can't use the harness: " + why);
-        }
 
         [HideFromIl2Cpp]
         internal string PutOn()

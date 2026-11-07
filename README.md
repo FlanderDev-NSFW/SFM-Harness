@@ -5,7 +5,7 @@ TODO: what the mod does, in a sentence or two for players of **Secret Flasher Ma
 ## Requirements
 - Secret Flasher Manaka (tested with v1.1.3)
 - BepInEx 6 for IL2CPP (tested with build 738)
-- **RestraintHub 1.0.0** or newer
+- **RestraintHub 2.0.0** or newer (2.x)
 
 ## Install
 Extract the zip into the game folder (the folder with `SecretFlasherManaka.exe`). You get `BepInEx/plugins/Harness/`.

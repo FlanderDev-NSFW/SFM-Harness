@@ -9,7 +9,7 @@ namespace Harness
 {
     /// <summary>A wearable harness: belt, thigh hoops and two pistons driven by crossed cords. Model authored in the 3D model repository.</summary>
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
-    [BepInDependency(Hub.Guid, "^1.1.0")]
+    [BepInDependency(Hub.Guid, "^2.0.0")] // RestraintHub 2: the panel (U), PutOn / TakeOff, mission settings
     public sealed class Plugin : BasePlugin
     {
         public const string PluginGuid = "FlanderDev.SFM.Harness";
@@ -17,7 +17,7 @@ namespace Harness
         public const string PluginVersion = "0.1.0";
 
         internal static ManualLogSource Logger;
-        internal static Restraint Entry;
+        internal static Wearable Entry;
         public static ConfigEntry<float> AttemptSeconds, SuccessChance, HoopAlongThigh, ScaleTrim, GuideDrop, Size, BeltHeight, PelvisSize, FrontSeat;
 
         public override void Load()
@@ -37,19 +37,16 @@ namespace Harness
             ClassInjector.RegisterTypeInIl2Cpp<HarnessController>();
             AddComponent<HarnessController>();
 
-            Entry = new Restraint
+            Entry = new Wearable
             {
                 Id = "Harness",
-                RingValue = 9700,
                 Label = () => "Harness",
-                ShortcutSaveKey = "Harness.Shortcuts",
                 OnSave = Patches.Save,
                 OnLoad = Patches.Load,
                 OnNewGame = () => HarnessController.Instance?.OnNewGame(),
                 Holds = BodyParts.None,
                 IsWorn = () => HarnessController.Instance != null && HarnessController.Instance.Machine.Worn,
                 Blocks = () => RestraintHub.Blocks.None,
-                OnChosen = () => HarnessController.Instance?.OnRingChosen(),
                 Attempt = () => HarnessController.Instance == null ? 0f : HarnessController.Instance.Machine.Attempt,
                 PutOn = () => HarnessController.Instance == null ? "not ready" : HarnessController.Instance.PutOn(),
                 TakeOff = () => HarnessController.Instance?.TakeOff(),
