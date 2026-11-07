@@ -93,10 +93,12 @@ namespace Harness
             var mats = new Material[_file.Materials.Count];
             Material source = FindToon();
             for (int i = 0; i < mats.Length; i++) mats[i] = MakeMaterial(source, _file.Materials[i]);
-            _dev = Node("Device", _thighL); _ringR = Node("RingR", _top.transform); _ringL = Node("RingL", _top.transform);
+            _dev = Node("Device", _thighL); _lockRing = Node("LockRing", _top.transform); _lock = Node("Lock", _top.transform); _lockReady = false; _ringR = Node("RingR", _top.transform); _ringL = Node("RingL", _top.transform);
             var ends = StretchEnds();
             foreach (var g in _file.Groups)
             {
+                if (g.Name == "lock_ring") { AddGroup(g, _lockRing, U(g.Pivot), Quaternion.identity, mats, layer); continue; }
+                if (g.Name == "lock") { AddGroup(g, _lock, U(g.Pivot), Quaternion.identity, mats, layer); continue; }
                 if (g.Name.StartsWith("dring_")) { AddGroup(g, g.Name.EndsWith("_R") ? _ringR : _ringL, U(g.Pivot), Quaternion.identity, mats, layer); continue; }
                 if (g.Name.StartsWith("rigid_"))
                 {
@@ -463,6 +465,7 @@ namespace Harness
                 hg.Append(' ').Append(h == _hoopFitL ? "left" : "right").Append(" min ").Append((lo * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)).Append(" mean ").Append((sum / Mathf.Max(n, 1) * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)).Append(" through ").Append(under).Append('/').Append(n);
             }
             Plugin.Logger.LogInfo(hg.ToString());
+            Plugin.Logger.LogInfo("[SFM-ACCEPT] lockcheck: " + LockCheck(w, tris, bl, bt) + " swing " + _la.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " " + _lb.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
             Plugin.Logger.LogInfo("[SFM-ACCEPT] ringcheck: " + RingCheck(_ringR, "R", w, tris, bl, bt) + " | " + RingCheck(_ringL, "L", w, tris, bl, bt));
             Plugin.Logger.LogInfo("[SFM-ACCEPT] chain: " + ChainReport(_linkF, 1f, w, tris, rot) + " | " + ChainReport(_linkR, -1f, w, tris, rot));
             Plugin.Logger.LogInfo("[SFM-ACCEPT] parts: stroke " + _driveF.Stroke.ToString("0.00") + " " + PartReport("front", _guideF, _axisF, w, tris, rot) + " " + PartReport("rear", _guideR, _axisR, w, tris, rot));
@@ -739,6 +742,51 @@ namespace Harness
             return side + " skin " + (skinDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " belt " + (beltDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        /// <summary>The heart and its ring against her skin, and the heart against the belt and buckle, in mm, on the real meshes. The ring is meant to touch the staple, so only skin counts for it.</summary>
+        private string LockCheck(Vector3[] w, int[] tris, Vector3[] beltWorld, int[] beltTris)
+        {
+            Quaternion rot = _belt.rotation; Vector3 pos = _belt.position, up = rot * Vector3.up, right = rot * Vector3.right, fwd = rot * Vector3.forward;
+            var lockPts = new List<Vector3>(); var ringPts = new List<Vector3>();
+            foreach (var mf in _lock.GetComponentsInChildren<MeshFilter>()) foreach (var v in mf.sharedMesh.vertices) lockPts.Add(mf.transform.TransformPoint(v));
+            foreach (var mf in _lockRing.GetComponentsInChildren<MeshFilter>()) foreach (var v in mf.sharedMesh.vertices) ringPts.Add(mf.transform.TransformPoint(v));
+            float skinDeep = 0f, beltDeep = 0f, lo = 9f, hi = -9f;
+            foreach (var p in lockPts) { float h = Vector3.Dot(p - pos, up); lo = Mathf.Min(lo, h); hi = Mathf.Max(hi, h); }
+            foreach (var p in ringPts) { float h = Vector3.Dot(p - pos, up); lo = Mathf.Min(lo, h); hi = Mathf.Max(hi, h); }
+            for (float h = lo; h <= hi + 0.001f; h += 0.002f)
+            {
+                Vector3 o = pos + up * h;
+                float[] skin = Bins(Cut(w, tris, o, up, right, fwd, _arm), true);
+                float[] belt = Bins(Cut(beltWorld, beltTris, o, up, right, fwd), true);
+                void Probe(List<Vector3> pts, bool againstBelt)
+                {
+                    foreach (var p in pts)
+                    {
+                        if (Mathf.Abs(Vector3.Dot(p - o, up)) > 0.001f) continue;
+                        float dx = Vector3.Dot(p - pos, right) - _band.CentreX, dz = Vector3.Dot(p - pos, fwd) - _band.CentreZ, r = Mathf.Sqrt(dx * dx + dz * dz); int k = BeltBand.Bin(Mathf.Atan2(dx, dz));
+                        skinDeep = Mathf.Max(skinDeep, skin[k] - r);
+                        if (againstBelt) beltDeep = Mathf.Max(beltDeep, belt[k] - r);
+                    }
+                }
+                Probe(lockPts, true); Probe(ringPts, false);
+            }
+            // and against the thigh straps, which come up close when she crouches: inside a strap's band, between its inside and outside faces
+            float strapDeep = 0f;
+            foreach (var hp in new[] { _hoopFitL, _hoopFitR })
+            {
+                if (hp.Band == null) continue;
+                Quaternion fr = hp.Node.rotation * Quaternion.Inverse(hp.ToFrame);
+                foreach (var p in lockPts)
+                {
+                    Vector3 q = Quaternion.Inverse(fr) * (p - hp.Node.position);
+                    if (Mathf.Abs(q.y) > hp.Half) continue;
+                    float dx = q.x - hp.Band.CentreX, dz = q.z - hp.Band.CentreZ, r = Mathf.Sqrt(dx * dx + dz * dz), a = Mathf.Atan2(dx, dz);
+                    float inner = hp.Band.Inside(a, q.y / hp.Half), outer = inner + 0.0045f * hp.Tall;
+                    if (r > inner - 0.002f && r < outer) strapDeep = Mathf.Max(strapDeep, outer - r);
+                }
+            }
+            return "lock strap " + (strapDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " skin " + (skinDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " belt " + (beltDeep * 1000).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         /// <summary>Tiny bright cubes on the outline measured: if they sit on her skin in a screenshot, the data matches what is drawn.</summary>
         private GameObject MarkerObject(List<Vector3> pts)
         {
@@ -904,6 +952,7 @@ namespace Harness
             End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ps);
             End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ps);
             SwingRing(_ringR, "R", _ringLiftR, rot, ls); SwingRing(_ringL, "L", _ringLiftL, rot, ls);
+            HangLock(ls);
             foreach (var st in _stretches)
             {
                 Vector3 a = Point(st.From, st.Start, st.FromOrigin), b = Point(st.To, st.End, st.ToOrigin), d = b - a;
@@ -1142,6 +1191,38 @@ namespace Harness
         }
 
         /// <summary>The small ring hanging from the slider on the belt, pulled towards the trapezoid by the V strap, and held off her skin where the hip widens under it.</summary>
+        private Transform _lockRing, _lock; private bool _lockReady; private float _la, _lav, _lb, _lbv; private Vector3 _lp, _lv, _lacc;
+
+        /// <summary>
+        /// The heart padlock: its ring hangs on the staple's outer bar and can only swing outward, away from the tabs it rests on; the lock hangs on the
+        /// ring and swings side to side. Both follow gravity and her movement, springy and damped, so it sways a little as she walks and settles when she stops.
+        /// </summary>
+        private void HangLock(float ls)
+        {
+            Vector3 bm = Sock("SOCKET_lock_bar"), xm = Sock("SOCKET_lock_x"), um = Sock("SOCKET_lock_up"), pm = Sock("SOCKET_lock_pivot");
+            Vector3 b = Point(_belt, bm, Vector3.zero), tw = (Point(_belt, xm, Vector3.zero) - b).normalized, uw = Vector3.ProjectOnPlane(Point(_belt, um, Vector3.zero) - b, tw).normalized;
+            Vector3 tm = (xm - bm).normalized, umm = Vector3.ProjectOnPlane(um - bm, tm).normalized;
+            Quaternion rb = Quaternion.LookRotation(Vector3.Cross(tw, uw), uw) * Quaternion.Inverse(Quaternion.LookRotation(Vector3.Cross(tm, umm), umm));
+            float dt = Mathf.Clamp(Time.deltaTime, 0.001f, 0.05f);
+            if (!_lockReady) { _lp = b; _lv = Vector3.zero; _lacc = Vector3.zero; }
+            Vector3 v = (b - _lp) / dt; _lacc = Vector3.Lerp(_lacc, Vector3.ClampMagnitude((v - _lv) / dt, 20f), 0.3f); _lp = b; _lv = v;
+            Vector3 g = new Vector3(0f, -9.81f, 0f) - _lacc * 0.6f;
+            Vector3 d0 = rb * (pm - bm).normalized, outW = rb * Vector3.forward, axis1 = Vector3.Cross(d0, outW).normalized;
+            float aT = Mathf.Clamp(Vector3.SignedAngle(d0, Vector3.ProjectOnPlane(g, axis1), axis1), 0f, 75f);
+            Quaternion q1Rest = Quaternion.identity;
+            if (!_lockReady) { _la = aT; _lav = 0f; }
+            _lav += (90f * (aT - _la) - 9f * _lav) * dt; _la += _lav * dt;
+            if (_la < 0f) { _la = 0f; if (_lav < 0f) _lav = 0f; }   // the tabs stop it swinging back
+            if (_la > 75f) { _la = 75f; if (_lav > 0f) _lav = 0f; }
+            Quaternion q1 = Quaternion.AngleAxis(_la, axis1);
+            _lockRing.SetPositionAndRotation(b, q1 * rb); _lockRing.localScale = Vector3.one * ls;
+            Vector3 piv = _lockRing.TransformPoint(pm - bm), rod = q1 * outW, e0 = Vector3.ProjectOnPlane(q1 * (rb * -umm), rod);
+            float bT = Mathf.Clamp(Vector3.SignedAngle(e0, Vector3.ProjectOnPlane(g, rod), rod), -50f, 50f);
+            if (!_lockReady) { _lb = bT; _lbv = 0f; _lockReady = true; }
+            _lbv += (90f * (bT - _lb) - 9f * _lbv) * dt; _lb = Mathf.Clamp(_lb + _lbv * dt, -50f, 50f);
+            _lock.SetPositionAndRotation(piv, Quaternion.AngleAxis(_lb, rod) * q1 * rb); _lock.localScale = Vector3.one * ls;
+        }
+
         private void SwingRing(Transform ring, string side, float lift, Quaternion rot, float ls)
         {
             // it hangs on a flat bar: the inner circle rests on the bar's two top corners, or on one corner once it swings, so its centre sits that far below the bar
