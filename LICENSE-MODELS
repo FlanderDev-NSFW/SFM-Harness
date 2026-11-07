@@ -1,0 +1,14 @@
+3D models and textures
+
+The 3D model used by this mod (src/Harness/assets/, also embedded in the mod's DLL)
+was made for this mod by FlanderDev. Its design follows fan art by yakou450770
+(https://www.pixiv.net/en/users/35003939; the artwork has since been deleted) of
+Daiwa Scarlet (Uma Musume). The code of the mod is under the MIT licence (LICENSE);
+this file is about the model only.
+
+- Harness (belt, thigh hoops, pistons, guides, cords)
+  by FlanderDev, design after fan art by yakou450770
+  Licence: CC BY-NC-ND 4.0
+
+Licence: CC BY-NC-ND 4.0 (Attribution-NonCommercial-NoDerivatives 4.0 International):
+  https://creativecommons.org/licenses/by-nc-nd/4.0/

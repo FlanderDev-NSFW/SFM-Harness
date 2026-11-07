@@ -1,6 +1,11 @@
-# Harness 0.1.0
+# Harness 2.0.0
 
-TODO: what the mod does, in a sentence or two for players of **Secret Flasher Manaka**.
+A harness for **Secret Flasher Manaka**: a belt around her waist, hoops around her thighs and two pistons between her legs,
+driven by crossed cords from the thigh hoops - they move as she moves her legs. Fitted to her body: sized and shaped to her
+waist, pelvis and thighs.
+
+Model: made for this mod by FlanderDev, the design after fan art by [yakou450770](https://www.pixiv.net/en/users/35003939)
+([CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/); details in `LICENSE-MODELS.txt`).
 
 ## Requirements
 - Secret Flasher Manaka (tested with v1.1.3)
@@ -11,15 +16,24 @@ TODO: what the mod does, in a sentence or two for players of **Secret Flasher Ma
 Extract the zip into the game folder (the folder with `SecretFlasherManaka.exe`). You get `BepInEx/plugins/Harness/`.
 
 ## How to use
-TODO: keys and where it is in the game.
+Open the restraint panel with `U` and click **Harness** (in Wearables). Hold `F` to struggle free. It holds no body part, so it
+can be worn together with the other restraints, and it blocks none of her actions.
 
 ## Settings
-`BepInEx/config/FlanderDev.SFM.Harness.cfg` (created on the first start).
+`BepInEx/config/FlanderDev.SFM.Harness.cfg` (created on the first start). Most useful:
+
+| Setting | Default | |
+|---|---|---|
+| Fit.Size | 0.78 | size of the hardware and straps against her body |
+| Fit.BeltHeight | 0.55 | where the belt sits, from her hip joints (0) to her chest (1) |
+| Fit.HoopAlongThigh | 0.6 | where the thigh hoops sit, from hip (0) to knee (1) |
+| Unlock.SuccessChance | 1 | chance that struggling frees her (1 = first try) |
 
 ## Good to know
-- TODO: known limits.
+- Saved with the game: after loading she still wears it.
+- Clothes are not measured: skirts and trousers can show through it.
 
-Single-player / offline only. Code: MIT licence (`LICENSE.txt`).
+Single-player / offline only. Code: MIT licence (`LICENSE.txt`). Model: CC BY-NC-ND 4.0 (`LICENSE-MODELS.txt`).
 
 ## Building from source
 - .NET SDK 8, and a copy of the game with BepInEx 6 IL2CPP started once: copy `Directory.Build.local.props.example` to

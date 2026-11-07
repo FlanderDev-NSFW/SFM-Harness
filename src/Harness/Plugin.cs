@@ -14,7 +14,7 @@ namespace Harness
     {
         public const string PluginGuid = "FlanderDev.SFM.Harness";
         public const string PluginName = "Harness";
-        public const string PluginVersion = "0.1.0";
+        public const string PluginVersion = "2.0.0";
 
         internal static ManualLogSource Logger;
         internal static Wearable Entry;
