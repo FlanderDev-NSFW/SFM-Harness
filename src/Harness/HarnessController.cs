@@ -58,6 +58,7 @@ namespace Harness
 
         private void Update()
         {
+            Perf.Frame(Time.unscaledDeltaTime);
             try { Tick(); }
             catch (Exception e) { Fail("Update", e); }
         }
@@ -75,7 +76,7 @@ namespace Harness
                 case LockMachine.Event.Unlocking: GameUi.PlaySe(InGameSoundManager.SeType.Unlock); break;
                 case LockMachine.Event.Unlocked: Plugin.Logger.LogInfo("[SFM-ACCEPT] release: off"); break;
             }
-            Status = Machine.State + (_rig == null ? "" : ", " + _rig.Status);
+            if (Time.frameCount % 30 == 0) Status = Machine.State + (_rig == null ? "" : ", " + _rig.Status);
         }
 
         // Measuring needs her arms out of the way, so the rig moves them for one moment here, before skinning; nothing of that is drawn.
@@ -85,7 +86,9 @@ namespace Harness
             {
                 if (!Machine.Worn || _rig == null || !_rig.Built || PlayerController.Instance == null) return;
                 var anim = PlayerController.Instance.Pca == null ? null : PlayerController.Instance.Pca.Animator;
+                long t = Perf.Now;
                 if (anim != null) _rig.Survey(anim);
+                Perf.Add(Perf.Survey, t);
             }
             catch (Exception e) { Fail("LateUpdate", e); }
         }
@@ -102,7 +105,9 @@ namespace Harness
                 if (anim == null) return;
                 EnsureRig(anim);
                 _rig.SetVisible(true);
+                long t = Perf.Now;
                 _rig.Place(anim);
+                Perf.Add(Perf.Place, t);
             }
             catch (Exception e) { Fail("onPreCull", e); }
         }
@@ -147,6 +152,10 @@ namespace Harness
         public static string Stroke(string v) { HarnessRig.ForcedStroke = float.Parse(v, System.Globalization.CultureInfo.InvariantCulture); return "stroke " + v; }
 
         public static string GapNow() { if (Instance?._rig == null) return "no rig"; Instance._rig.WantGap = true; return "gap report on the next frame"; }
+
+        public static string RefitNow() { if (Instance?._rig == null) return "no rig"; Instance._rig.Refit_Request(); return "refit next frame"; }
+
+        public static string PerfNow(string on) { Perf.On = on == "1"; return "perf " + on; }
 
         public static string MarkersNow(string on) { if (Instance?._rig == null) return "no rig"; HarnessRig.ShowMarkers = on == "1"; Instance._rig.WantGap = true; return "markers " + on; }
 
