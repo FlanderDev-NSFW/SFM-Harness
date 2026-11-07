@@ -1144,13 +1144,24 @@ namespace Harness
         /// <summary>The small ring hanging from the slider on the belt, pulled towards the trapezoid by the V strap, and held off her skin where the hip widens under it.</summary>
         private void SwingRing(Transform ring, string side, float lift, Quaternion rot, float ls)
         {
-            Vector3 chape = Sock("SOCKET_chape_" + side), model = Sock("SOCKET_vstrap_top_" + side) - chape;
-            Vector3 p = Point(_belt, chape, Vector3.zero), pull = _linkF[3].TransformPoint(Sock("SOCKET_vstrap_bottom_" + side) - Sock("SOCKET_link_f3"));
+            // it hangs on a flat bar: the inner circle rests on the bar's two top corners, or on one corner once it swings, so its centre sits that far below the bar
+            Vector3 model = Sock("SOCKET_vstrap_top_" + side) - Sock("SOCKET_chape_" + side);
+            Vector3 span = Point(_belt, Sock("SOCKET_span_" + side), Vector3.zero), across = (Point(_belt, Sock("SOCKET_span_x_" + side), Vector3.zero) - span).normalized;
+            Vector3 pull = _linkF[3].TransformPoint(Sock("SOCKET_vstrap_bottom_" + side) - Sock("SOCKET_link_f3"));
             Vector3 centre = _belt.position + _belt.rotation * new Vector3(_band.CentreX, 0f, _band.CentreZ), up = _belt.rotation * Vector3.up;
-            Vector3 outward = Vector3.ProjectOnPlane(p - centre, up).normalized, bar = p + (pull - p).normalized * (model.magnitude * ls) + outward * (lift + 0.0055f * ls);   // the ring tips out over the belt's lower trim
-            ring.SetPositionAndRotation(p, Quaternion.FromToRotation(rot * model.normalized, (bar - p).normalized) * rot);
+            Vector3 outward = Vector3.ProjectOnPlane(span - centre, up).normalized;
+            float rc = RingR * ls, ri = (RingR - RingRod) * ls, w = SpanW * ls;
+            Vector3 d = ((pull - span).normalized * (2f * rc) + outward * (lift + 0.0055f * ls)).normalized;
+            // it can only tip out as far as the band lets it: past about 12 degrees its rod would cut the band's faces
+            float tip = Vector3.Dot(d, outward), most = Mathf.Sin(12f * Mathf.Deg2Rad);
+            if (tip > most) d = (Vector3.ProjectOnPlane(d, outward).normalized * Mathf.Cos(12f * Mathf.Deg2Rad) + outward * most).normalized;
+            float dt = Mathf.Abs(Vector3.Dot(d, across)), L = -w * dt + Mathf.Sqrt(Mathf.Max(ri * ri - w * w * (1f - dt * dt), 0f));
+            Vector3 top = span + d * (L - rc);
+            ring.SetPositionAndRotation(top, Quaternion.FromToRotation(rot * model.normalized, d) * rot);
             ring.localScale = Vector3.one * ls;
         }
+
+        private const float RingR = 0.0078f, RingRod = 0.0016f, SpanW = 0.0039f;
 
         private float RingLift(Vector3[] w, int[] tris, Transform ring, string side, float ls, Vector3 pos, Vector3 up, Vector3 right, Vector3 fwd)
         {
