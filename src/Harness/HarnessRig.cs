@@ -52,6 +52,7 @@ namespace Harness
         private Mesh _beltMesh; private Vector3[] _beltRest; private BeltBand _band; private float _beltTall = 1f, _beltThick = 1f; private float[] _modelInner;
         private bool[] _arm; private Vector3 _lh, _ls; private Quaternion _qh, _qs; private GameObject _markers; private Material _markerMat;
         public void Refit_Request() { _needMeasure = true; }
+        public float CordLogUntil; private readonly System.Text.StringBuilder _cordLog = new System.Text.StringBuilder();
         public bool WantGap; public static bool ShowMarkers; public static bool Probe; public float WatchUntil; private float _nextWatch;
         public void Hide(bool off) { if (_top != null) foreach (var r in _top.GetComponentsInChildren<MeshRenderer>(true)) r.enabled = !off; }
         private const float BeltHalf = 0.039f, Clear = 0.002f, MaxLift = 0.012f;
@@ -61,7 +62,7 @@ namespace Harness
         private readonly List<Stretch> _stretches = new List<Stretch>();
         private readonly Transform[] _cords = new Transform[4];
         private readonly List<UnityEngine.Object> _owned = new List<UnityEngine.Object>();
-        private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive();
+        private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive(); private readonly BalanceDrive _balance = new BalanceDrive();
         private Vector3 _hipL, _hipR, _hoopL, _hoopR, _axisF, _axisR;
                 private float _lowerScale = 1f, _nextFit, _thighLength;
         private int _fits;
@@ -171,7 +172,7 @@ namespace Harness
                 r.allowOcclusionWhenDynamic = false;
                 _cords[i] = go.transform;
             }
-            _driveF.Reset(); _driveR.Reset();
+            _driveF.Reset(); _driveR.Reset(); _balance.Reset();
             _fits = 0; _nextFit = 0f; _needMeasure = true; _markerMat = mats[_file.Materials.FindIndex(m => m.Name == "pink")];
             SetVisible(false);
         }
@@ -1039,11 +1040,14 @@ namespace Harness
             Vector3 rEL = RestBar("eyelet_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up), rER = RestBar("eyelet_R", hl, kl, _hipL, _hoopL, _hoopFitL, rot, up);
             float cordF = (barAL - barER).magnitude + (barER - eyeF0).magnitude, cordR = (barAR - barEL).magnitude + (barEL - eyeR0).magnitude;
             float restF = (rAL - rER).magnitude + (rER - eyeF0).magnitude, restR = (rAR - rEL).magnitude + (rEL - eyeR0).magnitude;
+            if (CordLogUntil > Time.time) _cordLog.Append(Time.time.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(((cordF - restF) / thigh).ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(((cordR - restR) / thigh).ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(Vector3.Dot(kl - kr, fwd).ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(_balance.Front.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(_balance.Rear.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
+            else if (_cordLog.Length > 0) { Plugin.Logger.LogInfo("[SFM-ACCEPT] cordlog: " + _cordLog); _cordLog.Clear(); }
             _driveF.Update(cordF, restF, thigh, dt);
             _driveR.Update(cordR, restR, thigh, dt);
-            float force = ForcedStroke;
-            _pistonF.localPosition = -_axisF * ((force >= 0f ? force : _driveF.Stroke) * StrokeMetres);
-            _pistonR.localPosition = -_axisR * ((force >= 0f ? force : _driveR.Stroke) * StrokeMetres);
+            _balance.Update((cordF - restF) / thigh, (cordR - restR) / thigh, dt);
+            float force = ForcedStroke, sF = Plugin.Alternate.Value ? _balance.Front : _driveF.Stroke, sR = Plugin.Alternate.Value ? _balance.Rear : _driveR.Stroke;
+            _pistonF.localPosition = -_axisF * ((force >= 0f ? force : sF) * StrokeMetres);
+            _pistonR.localPosition = -_axisR * ((force >= 0f ? force : sR) * StrokeMetres);
             Vector3 eyeF = _pistonF.TransformPoint(Sock("SOCKET_cord_front") - _cF), eyeR = _pistonR.TransformPoint(Sock("SOCKET_cord_rear") - _cR);
 
             Vector3 seatAL = Swing("anchor_L", "SOCKET_anchor_L", barAL, (barER - barAL).normalized, _thighR, ls);
@@ -1080,7 +1084,7 @@ namespace Harness
             Perf.Add(Perf.Settle, tse);
             if (WatchUntil > Time.time && Time.time >= _nextWatch) { _nextWatch = Time.time + 0.2f; WantGap = true; }
             if (WantGap) { WantGap = false; GapReport(anim); }
-            if (Time.frameCount % 30 == 0) Status = "size " + ls.ToString("0.00") + " stroke " + _driveF.Stroke.ToString("0.00") + " " + _driveR.Stroke.ToString("0.00") + " cord " + cordF.ToString("0.000") + " of " + restF.ToString("0.000") + ", " + cordR.ToString("0.000") + " of " + restR.ToString("0.000");
+            if (Time.frameCount % 30 == 0) Status = "size " + ls.ToString("0.00") + " stroke " + sF.ToString("0.00") + " " + sR.ToString("0.00") + " cord " + cordF.ToString("0.000") + " of " + restF.ToString("0.000") + ", " + cordR.ToString("0.000") + " of " + restR.ToString("0.000");
         }
 
         private Vector3 Point(Transform node, Vector3 model, Vector3 origin) =>

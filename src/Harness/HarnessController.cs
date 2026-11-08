@@ -155,6 +155,8 @@ namespace Harness
 
         public static string RefitNow() { if (Instance?._rig == null) return "no rig"; Instance._rig.Refit_Request(); return "refit next frame"; }
 
+        public static string CordLog(string seconds) { if (Instance?._rig == null) return "no rig"; Instance._rig.CordLogUntil = Time.time + float.Parse(seconds, System.Globalization.CultureInfo.InvariantCulture); return "logging cords"; }
+
         public static string PerfNow(string on) { Perf.On = on == "1"; return "perf " + on; }
 
         public static string MarkersNow(string on) { if (Instance?._rig == null) return "no rig"; HarnessRig.ShowMarkers = on == "1"; Instance._rig.WantGap = true; return "markers " + on; }
