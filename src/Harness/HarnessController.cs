@@ -157,6 +157,16 @@ namespace Harness
 
         public static string CordLog(string seconds) { if (Instance?._rig == null) return "no rig"; Instance._rig.CordLogUntil = Time.time + float.Parse(seconds, System.Globalization.CultureInfo.InvariantCulture); return "logging cords"; }
 
+        /// <summary>Diagnostics. Zeta's slack and full pull for the front, then the rear piston, as shares of her thigh: "-0.08,0.12,-0.03,0.16".</summary>
+        public static string ZetaTune(string v)
+        {
+            if (Instance?._rig == null) return "no rig";
+            var p = v.Split(','); var ci = System.Globalization.CultureInfo.InvariantCulture;
+            Instance._rig.TuneZeta(float.Parse(p[0], ci), float.Parse(p[1], ci), float.Parse(p[2], ci), float.Parse(p[3], ci)); return "zeta " + v;
+        }
+
+        public static string ModeNow(string m) { Plugin.Mode.Value = m == "gamma" ? DriveMode.Gamma : DriveMode.Zeta; return "mode " + Plugin.Mode.Value; }
+
         public static string PerfNow(string on) { Perf.On = on == "1"; return "perf " + on; }
 
         public static string MarkersNow(string on) { if (Instance?._rig == null) return "no rig"; HarnessRig.ShowMarkers = on == "1"; Instance._rig.WantGap = true; return "markers " + on; }

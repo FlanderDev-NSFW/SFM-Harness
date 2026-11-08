@@ -337,10 +337,21 @@ namespace Harness.Logic
 
     /// <summary>Turns cord length into piston travel. The cord is slack for a little past its length with her legs straight down, then pulls.
     /// All lengths are shares of her thigh, so it works the same on any body.</summary>
+    /// <summary>Which cords drive the pistons. Gamma: the crossed cords. Zeta: two cords to her right thigh, one behind and one in front.</summary>
+    public enum DriveMode { Gamma, Zeta }
+
+    /// <summary>
+    /// One piston pulled by its cord against its springs. The pull is how much longer the cord is than with her legs straight down, as a share of her
+    /// thigh. The first Slack of it only takes up the cord; after that the piston travels until the pull reaches Slack + FullAt. A short lag stands in for
+    /// the springs and the cord's give.
+    /// </summary>
     public sealed class PistonDrive
     {
-        public const float Slack = 0.12f, FullAt = 0.50f, Lag = 0.06f;
+        public const float Lag = 0.06f;
+        public float Slack, FullAt;
         public float Stroke { get; private set; } // 0..1
+
+        public PistonDrive(float slack = 0.12f, float fullAt = 0.50f) { Slack = slack; FullAt = fullAt; }
 
         public void Reset() { Stroke = 0f; }
 
@@ -350,28 +361,6 @@ namespace Harness.Logic
             want = want < 0f ? 0f : want > 1f ? 1f : want;
             float k = dt <= 0f ? 1f : 1f - (float)Math.Exp(-dt / Lag);
             Stroke += (want - Stroke) * k;
-        }
-    }
-
-    /// <summary>
-    /// The two pistons balanced against each other: one goes down as the other comes up. Each cord's pull is how much longer it is than with her legs
-    /// straight down, as a share of her thigh. Spreading her legs pulls both cords alike and the pulls cancel; a stride pulls one more than the other,
-    /// and that difference swings the pair. Standing still, both rest halfway.
-    /// </summary>
-    public sealed class BalanceDrive
-    {
-        public const float Swing = 0.30f, Lag = 0.06f;   // a difference of Swing either way takes a piston all the way down
-        public float Front { get; private set; } = 0.5f;
-        public float Rear => 1f - Front;
-
-        public void Reset() { Front = 0.5f; }
-
-        public void Update(float frontPull, float rearPull, float dt)
-        {
-            float want = 0.5f + (frontPull - rearPull) / (2f * Swing);
-            want = want < 0f ? 0f : want > 1f ? 1f : want;
-            float k = dt <= 0f ? 1f : 1f - (float)Math.Exp(-dt / Lag);
-            Front += (want - Front) * k;
         }
     }
 

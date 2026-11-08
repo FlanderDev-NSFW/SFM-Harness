@@ -62,7 +62,14 @@ namespace Harness
         private readonly List<Stretch> _stretches = new List<Stretch>();
         private readonly Transform[] _cords = new Transform[4];
         private readonly List<UnityEngine.Object> _owned = new List<UnityEngine.Object>();
-        private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive(); private readonly BalanceDrive _balance = new BalanceDrive();
+        private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive();
+        // Zeta: each piston follows its own cord to her right thigh. Both cords are set short (a negative slack), so each starts to pull as her right leg passes
+        // the middle of its swing, which in the game's walk is about 14 degrees forward, and the piston is fully out at the end of that leg's swing.
+        // Measured on the large body through a walk: front pull -0.13 to +0.09, rear -0.10 to +0.20, middle of the stride -0.08 and -0.03.
+        public const float ZetaFrontSlack = -0.08f, ZetaFrontFull = 0.12f, ZetaRearSlack = -0.03f, ZetaRearFull = 0.16f;
+        private readonly PistonDrive _zetaF = new PistonDrive(ZetaFrontSlack, ZetaFrontFull), _zetaR = new PistonDrive(ZetaRearSlack, ZetaRearFull);
+        private readonly List<GameObject> _gammaOnly = new List<GameObject>(), _zetaOnly = new List<GameObject>(); private int _shownMode = -1;
+        public void TuneZeta(float fs, float ff, float rs, float rf) { _zetaF.Slack = fs; _zetaF.FullAt = ff; _zetaR.Slack = rs; _zetaR.FullAt = rf; }
         private Vector3 _hipL, _hipR, _hoopL, _hoopR, _axisF, _axisR;
                 private float _lowerScale = 1f, _nextFit, _thighLength;
         private int _fits;
@@ -118,6 +125,7 @@ namespace Harness
                 {
                     bool her_left = g.Name == "rigid_dev" || g.Name.EndsWith("_R");   // Beta's R side is her left
                     Transform seat = g.Name == "rigid_dev" ? _dev : Node(g.Name, her_left ? _thighL : _thighR);
+                    if (g.Name.StartsWith("rigid_tab_")) (g.Name.StartsWith("rigid_tab_z") ? _zetaOnly : _gammaOnly).Add(seat.gameObject);
                     AddGroup(g, seat, U(g.Pivot), Quaternion.identity, mats, layer);
                     Vector3 p = U(g.Pivot) - (her_left ? _hoopL : _hoopR); seat.localPosition = p;
                     (her_left ? _hoopFitL : _hoopFitR).Fixed.Add(new Seat { T = seat, P = p });
@@ -172,7 +180,13 @@ namespace Harness
                 r.allowOcclusionWhenDynamic = false;
                 _cords[i] = go.transform;
             }
-            _driveF.Reset(); _driveR.Reset(); _balance.Reset();
+            _driveF.Reset(); _driveR.Reset(); _zetaF.Reset(); _zetaR.Reset();
+            foreach (var kv in _own)
+            {
+                if (kv.Key.StartsWith("ring_z") || kv.Key.StartsWith("end_z")) _zetaOnly.Add(kv.Value.gameObject);
+                else if (kv.Key.StartsWith("ring_anchor_") || kv.Key.StartsWith("ring_eyelet_") || kv.Key.StartsWith("end_front_") || kv.Key.StartsWith("end_rear_")) _gammaOnly.Add(kv.Value.gameObject);
+            }
+            _gammaOnly.Add(_cords[2].gameObject); _gammaOnly.Add(_cords[3].gameObject); _shownMode = -1;
             _fits = 0; _nextFit = 0f; _needMeasure = true; _markerMat = mats[_file.Materials.FindIndex(m => m.Name == "pink")];
             SetVisible(false);
         }
@@ -1040,25 +1054,63 @@ namespace Harness
             Vector3 rEL = RestBar("eyelet_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up), rER = RestBar("eyelet_R", hl, kl, _hipL, _hoopL, _hoopFitL, rot, up);
             float cordF = (barAL - barER).magnitude + (barER - eyeF0).magnitude, cordR = (barAR - barEL).magnitude + (barEL - eyeR0).magnitude;
             float restF = (rAL - rER).magnitude + (rER - eyeF0).magnitude, restR = (rAR - rEL).magnitude + (rEL - eyeR0).magnitude;
-            if (CordLogUntil > Time.time) _cordLog.Append(Time.time.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(((cordF - restF) / thigh).ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(((cordR - restR) / thigh).ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(Vector3.Dot(kl - kr, fwd).ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(_balance.Front.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(_balance.Rear.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
-            else if (_cordLog.Length > 0) { Plugin.Logger.LogInfo("[SFM-ACCEPT] cordlog: " + _cordLog); _cordLog.Clear(); }
-            _driveF.Update(cordF, restF, thigh, dt);
-            _driveR.Update(cordR, restR, thigh, dt);
-            _balance.Update((cordF - restF) / thigh, (cordR - restR) / thigh, dt);
-            float force = ForcedStroke, sF = Plugin.Alternate.Value ? _balance.Front : _driveF.Stroke, sR = Plugin.Alternate.Value ? _balance.Rear : _driveR.Stroke;
+            bool zeta = Plugin.Mode.Value == DriveMode.Zeta;
+            if (_shownMode != (zeta ? 1 : 0))
+            {
+                _shownMode = zeta ? 1 : 0;
+                foreach (var o in _gammaOnly) o.SetActive(!zeta);
+                foreach (var o in _zetaOnly) o.SetActive(zeta);
+            }
+            // Zeta: the ring on the back of her right thigh strap pulls the front piston, the ring on its front the rear piston
+            Vector3 zB = default, zF = default;
+            if (zeta)
+            {
+                zB = Bar("zback_L", _thighR, _hoopFitR, _hoopR); zF = Bar("zfront_L", _thighR, _hoopFitR, _hoopR);
+                Vector3 rB = RestBar("zback_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up), rZ = RestBar("zfront_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up);
+                cordF = (zB - eyeF0).magnitude; cordR = (zF - eyeR0).magnitude; restF = (rB - eyeF0).magnitude; restR = (rZ - eyeR0).magnitude;
+                _zetaF.Update(cordF, restF, thigh, dt); _zetaR.Update(cordR, restR, thigh, dt);
+            }
+            else { _driveF.Update(cordF, restF, thigh, dt); _driveR.Update(cordR, restR, thigh, dt); }
+            float force = ForcedStroke, sF = zeta ? _zetaF.Stroke : _driveF.Stroke, sR = zeta ? _zetaR.Stroke : _driveR.Stroke;
+            if (CordLogUntil > Time.time)
+            {
+                var ci = System.Globalization.CultureInfo.InvariantCulture;
+                _cordLog.Append(Time.time.ToString("0.000", ci)).Append(' ').Append(((cordF - restF) / thigh).ToString("0.0000", ci)).Append(' ').Append(((cordR - restR) / thigh).ToString("0.0000", ci))
+                    .Append(' ').Append(Vector3.SignedAngle(-up, (kr - hr).normalized, right).ToString("0.0", ci)).Append(' ').Append(Vector3.SignedAngle(-up, (kl - hl).normalized, right).ToString("0.0", ci))
+                    .Append(' ').Append(sF.ToString("0.000", ci)).Append(' ').Append(sR.ToString("0.000", ci)).Append(';');
+            }
+            else if (_cordLog.Length > 0)
+            {
+                Plugin.Logger.LogInfo("[SFM-ACCEPT] cordlog: " + _cordLog); _cordLog.Clear();
+                if (_gapLog.Length > 0) { Plugin.Logger.LogInfo("[SFM-ACCEPT] cordgap: " + _gapLog); _gapLog.Clear(); }
+            }
             _pistonF.localPosition = -_axisF * ((force >= 0f ? force : sF) * StrokeMetres);
             _pistonR.localPosition = -_axisR * ((force >= 0f ? force : sR) * StrokeMetres);
             Vector3 eyeF = _pistonF.TransformPoint(Sock("SOCKET_cord_front") - _cF), eyeR = _pistonR.TransformPoint(Sock("SOCKET_cord_rear") - _cR);
 
-            Vector3 seatAL = Swing("anchor_L", "SOCKET_anchor_L", barAL, (barER - barAL).normalized, _thighR, ls);
-            Vector3 seatAR = Swing("anchor_R", "SOCKET_anchor_R", barAR, (barEL - barAR).normalized, _thighL, ls);
-            Vector3 seatEL = Swing("eyelet_L", "SOCKET_eyelet_L", barEL, ((barAR - barEL).normalized + (eyeR - barEL).normalized).normalized, _thighR, ls);
-            Vector3 seatER = Swing("eyelet_R", "SOCKET_eyelet_R", barER, ((barAL - barER).normalized + (eyeF - barER).normalized).normalized, _thighL, ls);
-            Line(_cords[0], seatAL, seatER, ls); Line(_cords[1], seatER, eyeF, ls); Line(_cords[2], seatAR, seatEL, ls); Line(_cords[3], seatEL, eyeR, ls);
-            End("end_front_thigh", seatAL, seatER, "SOCKET_anchor_L", "SOCKET_eyelet_R", _thighR, ls);
-            End("end_rear_thigh", seatAR, seatEL, "SOCKET_anchor_R", "SOCKET_eyelet_L", _thighL, ls);
-            End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ps);
-            End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ps);
+            if (zeta)
+            {
+                Vector3 seatB = Swing("zback_L", "SOCKET_zback_L", zB, (eyeF - zB).normalized, _thighR, ls);
+                Vector3 seatF = Swing("zfront_L", "SOCKET_zfront_L", zF, (eyeR - zF).normalized, _thighR, ls);
+                Line(_cords[0], seatB, eyeF, ls); Line(_cords[1], seatF, eyeR, ls);
+                End("end_zback_thigh", seatB, eyeF, "SOCKET_zback_L", "SOCKET_cord_front", _thighR, ls);
+                End("end_zfront_thigh", seatF, eyeR, "SOCKET_zfront_L", "SOCKET_cord_rear", _thighR, ls);
+                End("end_zback_piston", eyeF, seatB, "SOCKET_cord_front", "SOCKET_zback_L", _guideF, ps);
+                End("end_zfront_piston", eyeR, seatF, "SOCKET_cord_rear", "SOCKET_zfront_L", _guideR, ps);
+                if (CordLogUntil > Time.time && Time.frameCount % 6 == 0) CordGap(anim, seatB, eyeF, seatF, eyeR, mid, right, up);
+            }
+            else
+            {
+                Vector3 seatAL = Swing("anchor_L", "SOCKET_anchor_L", barAL, (barER - barAL).normalized, _thighR, ls);
+                Vector3 seatAR = Swing("anchor_R", "SOCKET_anchor_R", barAR, (barEL - barAR).normalized, _thighL, ls);
+                Vector3 seatEL = Swing("eyelet_L", "SOCKET_eyelet_L", barEL, ((barAR - barEL).normalized + (eyeR - barEL).normalized).normalized, _thighR, ls);
+                Vector3 seatER = Swing("eyelet_R", "SOCKET_eyelet_R", barER, ((barAL - barER).normalized + (eyeF - barER).normalized).normalized, _thighL, ls);
+                Line(_cords[0], seatAL, seatER, ls); Line(_cords[1], seatER, eyeF, ls); Line(_cords[2], seatAR, seatEL, ls); Line(_cords[3], seatEL, eyeR, ls);
+                End("end_front_thigh", seatAL, seatER, "SOCKET_anchor_L", "SOCKET_eyelet_R", _thighR, ls);
+                End("end_rear_thigh", seatAR, seatEL, "SOCKET_anchor_R", "SOCKET_eyelet_L", _thighL, ls);
+                End("end_front_piston", eyeF, seatER, "SOCKET_cord_front", "SOCKET_eyelet_R", _guideF, ps);
+                End("end_rear_piston", eyeR, seatEL, "SOCKET_cord_rear", "SOCKET_eyelet_L", _guideR, ps);
+            }
             Perf.Add(Perf.Cords, tc);
             long tr = Perf.Now;
             SwingRing(_ringR, "R", _ringLiftR, rot, ls); SwingRing(_ringL, "L", _ringLiftL, rot, ls);
@@ -1381,6 +1433,67 @@ namespace Harness
             return rim > 0f ? rim - rp + 0.003f : 0f;
         }
 
+        private readonly System.Text.StringBuilder _gapLog = new System.Text.StringBuilder();
+
+        /// <summary>Diagnostics while cords are logged: how far each Zeta cord stays outside her skin, nearest vertex and its normal, mm (negative = inside).
+        /// The last 15 mm at each end are left out, where the cord meets its ring or eye.</summary>
+        private void CordGap(Animator anim, Vector3 a0, Vector3 a1, Vector3 b0, Vector3 b1, Vector3 mid, Vector3 right, Vector3 up)
+        {
+            var smr = HarnessController.FindBody(anim);
+            if (smr == null) return;
+            var w = Bake(smr, out int[] tris);
+            Vector3[] nl = _bakeMesh.normals; Quaternion r = smr.transform.rotation;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            _gapLog.Append(Time.time.ToString("0.000", ci));
+            foreach (var (p0, p1) in new[] { (a0, a1), (b0, b1) })
+            {
+                float len = (p1 - p0).magnitude, worst = 9f, at = 0f; Vector3 wq = Vector3.zero;
+                NVector3 lo = N(Vector3.Min(p0, p1)) - new NVector3(0.08f), hi = N(Vector3.Max(p0, p1)) + new NVector3(0.08f);
+                var inBox = new bool[w.Length];
+                for (int i = 0; i < w.Length; i++) { var q = w[i]; inBox[i] = q.x > lo.X && q.x < hi.X && q.y > lo.Y && q.y < hi.Y && q.z > lo.Z && q.z < hi.Z; }
+                var near = new List<int>();
+                for (int i = 0; i < tris.Length; i += 3) if (inBox[tris[i]] || inBox[tris[i + 1]] || inBox[tris[i + 2]]) near.Add(i);
+                for (int k = 0; k <= 24; k++)
+                {
+                    float f = k / 24f, along = f * len;
+                    if (along < 0.015f || along > len - 0.015f) continue;
+                    NVector3 p = N(Vector3.Lerp(p0, p1, f)); int best = -1; float bd = 1e9f; NVector3 bq = default;
+                    foreach (int i in near)
+                    {
+                        NVector3 q = ClosestOnTri(p, N(w[tris[i]]), N(w[tris[i + 1]]), N(w[tris[i + 2]])); float d = NVector3.DistanceSquared(p, q);
+                        if (d < bd) { bd = d; best = i; bq = q; }
+                    }
+                    if (best < 0) continue;
+                    // the face's own normal, turned to agree with her vertex normals (which point out of her)
+                    NVector3 a = N(w[tris[best]]), fn = NVector3.Normalize(NVector3.Cross(N(w[tris[best + 1]]) - a, N(w[tris[best + 2]]) - a));
+                    NVector3 vn = N(r * (nl[tris[best]] + nl[tris[best + 1]] + nl[tris[best + 2]]));
+                    if (NVector3.Dot(fn, vn) < 0f) fn = -fn;
+                    float s = NVector3.Dot(p - bq, fn), g = s < 0f ? -MathF.Sqrt(bd) : MathF.Sqrt(bd);
+                    if (g < worst) { worst = g; at = f; wq = new Vector3(bq.X, bq.Y, bq.Z); }
+                }
+                _gapLog.Append(' ').Append((worst * 1000f).ToString("0.0", ci)).Append('@').Append(at.ToString("0.00", ci)).Append(':').Append((Vector3.Dot(wq - mid, right) * 1000f).ToString("0", ci)).Append(',').Append((Vector3.Dot(wq - mid, up) * 1000f).ToString("0", ci));
+            }
+            _gapLog.Append(';');
+        }
+
+        private static NVector3 ClosestOnTri(NVector3 p, NVector3 a, NVector3 b, NVector3 c)
+        {
+            NVector3 ab = b - a, ac = c - a, ap = p - a;
+            float d1 = NVector3.Dot(ab, ap), d2 = NVector3.Dot(ac, ap);
+            if (d1 <= 0f && d2 <= 0f) return a;
+            NVector3 bp = p - b; float d3 = NVector3.Dot(ab, bp), d4 = NVector3.Dot(ac, bp);
+            if (d3 >= 0f && d4 <= d3) return b;
+            float vc = d1 * d4 - d3 * d2;
+            if (vc <= 0f && d1 >= 0f && d3 <= 0f) return a + ab * (d1 / (d1 - d3));
+            NVector3 cp = p - c; float d5 = NVector3.Dot(ab, cp), d6 = NVector3.Dot(ac, cp);
+            if (d6 >= 0f && d5 <= d6) return c;
+            float vb = d5 * d2 - d1 * d6;
+            if (vb <= 0f && d2 >= 0f && d6 <= 0f) return a + ac * (d2 / (d2 - d6));
+            float va = d3 * d6 - d5 * d4;
+            if (va <= 0f && (d4 - d3) >= 0f && (d5 - d6) >= 0f) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+            float den = 1f / (va + vb + vc); return a + ab * (vb * den) + ac * (vc * den);
+        }
+
         private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)
         {
             float len = (knee - hip).magnitude;
@@ -1432,7 +1545,7 @@ namespace Harness
             if (_top != null) UnityEngine.Object.Destroy(_top);
             _top = null;
             foreach (var o in _owned) if (o != null) UnityEngine.Object.Destroy(o);
-            _owned.Clear(); _own.Clear(); _stretches.Clear(); _anchorF = null; _band = null; if (_markers != null) UnityEngine.Object.Destroy(_markers); _markers = null; _hoopFitL.Band = null; _hoopFitR.Band = null; _hoopFitL.Fixed.Clear(); _hoopFitR.Fixed.Clear(); _hoopFitL.Bone = _hoopFitR.Bone = null;
+            _owned.Clear(); _own.Clear(); _stretches.Clear(); _gammaOnly.Clear(); _zetaOnly.Clear(); _anchorF = null; _band = null; if (_markers != null) UnityEngine.Object.Destroy(_markers); _markers = null; _hoopFitL.Band = null; _hoopFitR.Band = null; _hoopFitL.Fixed.Clear(); _hoopFitR.Fixed.Clear(); _hoopFitL.Bone = _hoopFitR.Bone = null;
             _visible = false;
         }
     }

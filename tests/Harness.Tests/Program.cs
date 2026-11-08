@@ -17,12 +17,12 @@ namespace Harness.Tests
         {
             string file = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Harness", "assets", "harness.hrn"));
             var m = HarnessFile.Read(System.IO.File.OpenRead(file));
-            Check(m.Groups.Count == 39, "39 moving groups");
+            Check(m.Groups.Count == 51, "51 moving groups");
             Check(m.TriangleCount() > 50000, "whole model present");
             Check(m.Sockets.ContainsKey("SOCKET_cord_front") && m.Sockets.ContainsKey("BODY_hoop_R"), "sockets present");
             Check(m.Sockets["BODY_hip_R"].Position.X < 0, "Beta's right is her left: -X in Unity");
             Check(m.Sockets["SOCKET_guide_front"].Position.Z > m.Sockets["SOCKET_guide_rear"].Position.Z, "front guide is towards +Z");
-            Check(GroupMap.NodeOf("thigh_R") == GroupMap.LeftThigh && GroupMap.NodeOf("guide_rear") == GroupMap.GuideRear && GroupMap.NodeOf("piston_front") == GroupMap.PistonFront && GroupMap.NodeOf("ring_eyelet_R") == GroupMap.Own, "groups hang on the right nodes");
+            Check(GroupMap.NodeOf("thigh_R") == GroupMap.LeftThigh && GroupMap.NodeOf("guide_rear") == GroupMap.GuideRear && GroupMap.NodeOf("piston_front") == GroupMap.PistonFront && GroupMap.NodeOf("ring_eyelet_R") == GroupMap.Own && GroupMap.NodeOf("ring_zback_L") == GroupMap.Own, "groups hang on the right nodes");
             var d = new PistonDrive();
             d.Update(1f, 1f, 1f, 0f); Check(d.Stroke == 0f, "legs straight: no travel");
             d.Update(1.1f, 1f, 1f, 0f); Check(d.Stroke == 0f, "slack takes up the first stretch");
@@ -58,10 +58,10 @@ namespace Harness.Tests
             var ws = WirePath.Smooth(wc, 4);
             Check(ws.Length == 13 && ws[4] == wc[1] && ws[8] == wc[2] && ws[12] == wc[3], "wire: passes through its points");
             Check(ws[2].Y > -0.01f && ws[2].Y < 0.02f, "wire: no overshoot where points crowd");
-            var bal = new BalanceDrive();
-            bal.Update(0.2f, 0.2f, 1f); Check(Math.Abs(bal.Front - 0.5f) < 1e-4f && Math.Abs(bal.Rear - 0.5f) < 1e-4f, "balance: equal pulls, both halfway");
-            bal.Update(0.5f, 0.2f, 1f); Check(bal.Front > 0.99f && bal.Rear < 0.01f, "balance: a stronger front pull takes the front down and the rear up");
-            bal.Update(0.0f, 0.15f, 1f); Check(Math.Abs(bal.Front - 0.25f) < 1e-3f && Math.Abs(bal.Front + bal.Rear - 1f) < 1e-5f, "balance: the two always add up to one stroke");
+            var z = new PistonDrive(0.02f, 0.12f);
+            z.Update(1.01f, 1f, 1f, 0f); Check(z.Stroke == 0f, "zeta: a little slack first");
+            z.Update(1.08f, 1f, 1f, 0f); Check(Math.Abs(z.Stroke - 0.5f) < 1e-4f, "zeta: half way at half the pull");
+            z.Update(0.9f, 1f, 1f, 0f); Check(z.Stroke == 0f, "zeta: a shorter cord leaves the piston in");
             var lift = new float[BeltBand.Bins]; lift[0] = 0.01f; band.Lift(lift);
             Check(Math.Abs(band.Lower[0] - 0.21f) < 0.002f && band.Lower[1] > band.Lower[3], "band: a push out spreads to its neighbours");
             band = BeltBand.From(ring, ring3, ring3, System.Numerics.Vector2.Zero, 0f, inner);
