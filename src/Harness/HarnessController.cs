@@ -165,6 +165,9 @@ namespace Harness
             Instance._rig.TuneZeta(float.Parse(p[0], ci), float.Parse(p[1], ci), float.Parse(p[2], ci), float.Parse(p[3], ci)); return "zeta " + v;
         }
 
+        /// <summary>Diagnostics. 0 draws Zeta's cords straight, 1 lays them on her skin again.</summary>
+        public static string WrapNow(string on) { HarnessRig.WrapOn = on == "1"; return "wrap " + on; }
+
         public static string ModeNow(string m) { Plugin.Mode.Value = m == "gamma" ? DriveMode.Gamma : DriveMode.Zeta; return "mode " + Plugin.Mode.Value; }
 
         public static string PerfNow(string on) { Perf.On = on == "1"; return "perf " + on; }

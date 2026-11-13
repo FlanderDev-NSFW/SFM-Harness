@@ -12,7 +12,7 @@ namespace Harness
     /// the game's own anchor bones in her pelvis (chains hang from the guides), the hoops sit on her thighs. Straps, springs and wire stretch between those; rings swing to
     /// their pull. Sizes come from a bake of her body, positions from the bones (a bake only roughly matches them).
     /// </summary>
-    internal sealed class HarnessRig
+    internal sealed partial class HarnessRig
     {
         private const string Tag = "Harness.";
         // Beta's sizes: the belt's opening, the hoop's opening, the belt's height, and the point of the model that goes at her crotch.
@@ -63,13 +63,21 @@ namespace Harness
         private readonly Transform[] _cords = new Transform[4];
         private readonly List<UnityEngine.Object> _owned = new List<UnityEngine.Object>();
         private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive();
-        // Zeta: each piston follows its own cord to her right thigh. Both cords are set short (a negative slack), so each starts to pull as her right leg passes
-        // the middle of its swing, which in the game's walk is about 14 degrees forward, and the piston is fully out at the end of that leg's swing.
-        // Measured on the large body through a walk: front pull -0.13 to +0.09, rear -0.10 to +0.20, middle of the stride -0.08 and -0.03.
+        // Zeta: each piston follows its own cord to her right thigh. Each cord's length is set so that it starts to pull as her right leg passes the middle
+        // of its swing, and the piston is fully out at the end of that swing. The game's walk swings her thighs from about 42 degrees forward to 17 back,
+        // round a middle 14 degrees forward. Where that puts each ring differs from body to body, so the lengths are worked out on her (ZetaFit); these are
+        // the large body's, measured through a walk, and stand in until then.
         public const float ZetaFrontSlack = -0.08f, ZetaFrontFull = 0.12f, ZetaRearSlack = -0.03f, ZetaRearFull = 0.16f;
+        private const float WalkMiddle = -14f, WalkBack = 17f, WalkForward = -42f;   // thigh swing, degrees, forward negative
+        private bool _zetaManual, _zetaLearned; private int _zetaFitAt = -1; private float _zetaLogged = float.NaN;
+        // ...and then from her own stride: over each few seconds of walking, how far each cord's pull really ranges. A cord starts to pull 23% of the way
+        // up that range and its piston is fully out at 78%, which is what suited the large body.
+        private const float LearnWindow = 3f, LearnStart = 0.23f, LearnFull = 0.78f, LearnLeast = 0.10f;
+        private float _learnEnd, _loF, _hiF, _loR, _hiR; private bool _learnOpen;
+        public static bool WrapOn = true;
         private readonly PistonDrive _zetaF = new PistonDrive(ZetaFrontSlack, ZetaFrontFull), _zetaR = new PistonDrive(ZetaRearSlack, ZetaRearFull);
         private readonly List<GameObject> _gammaOnly = new List<GameObject>(), _zetaOnly = new List<GameObject>(); private int _shownMode = -1;
-        public void TuneZeta(float fs, float ff, float rs, float rf) { _zetaF.Slack = fs; _zetaF.FullAt = ff; _zetaR.Slack = rs; _zetaR.FullAt = rf; }
+        public void TuneZeta(float fs, float ff, float rs, float rf) { _zetaF.Slack = fs; _zetaF.FullAt = ff; _zetaR.Slack = rs; _zetaR.FullAt = rf; _zetaManual = true; }
         private Vector3 _hipL, _hipR, _hoopL, _hoopR, _axisF, _axisR;
                 private float _lowerScale = 1f, _nextFit, _thighLength;
         private int _fits;
@@ -180,6 +188,7 @@ namespace Harness
                 r.allowOcclusionWhenDynamic = false;
                 _cords[i] = go.transform;
             }
+            MakeWrapSegments(tube, mats[cordMat], layer);
             _driveF.Reset(); _driveR.Reset(); _zetaF.Reset(); _zetaR.Reset();
             foreach (var kv in _own)
             {
@@ -465,7 +474,7 @@ namespace Harness
                 FitThigh(_hoopFitR, B(HumanBodyBones.RightUpperLeg), B(HumanBodyBones.RightLowerLeg), w, tris, _hipR, _hoopR, rot, sy);
             }
             _driveF.Reset(); _driveR.Reset();
-            _needMeasure = false; _fits++; _wantBow = 3; _ringLiftR = _ringLiftL = 0f;
+            _needMeasure = false; _fits++; _patch = null; _patchFailed = false; _zetaLearned = false; _learnOpen = false; _wantBow = 3; _ringLiftR = _ringLiftL = 0f;
             Plugin.Logger.LogInfo("[SFM-ACCEPT] fit: waist at " + h0.ToString("0.000") + " of " + top.ToString("0.000") + ", " + (x1 - x0).ToString("0.000") + " x " + (z1 - z0).ToString("0.000") + ", band height " + (half * 2).ToString("0.000") + ", size " + sy.ToString("0.00"));
         }
 
@@ -1068,6 +1077,8 @@ namespace Harness
                 zB = Bar("zback_L", _thighR, _hoopFitR, _hoopR); zF = Bar("zfront_L", _thighR, _hoopFitR, _hoopR);
                 Vector3 rB = RestBar("zback_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up), rZ = RestBar("zfront_L", hr, kr, _hipR, _hoopR, _hoopFitR, rot, up);
                 cordF = (zB - eyeF0).magnitude; cordR = (zF - eyeR0).magnitude; restF = (rB - eyeF0).magnitude; restR = (rZ - eyeR0).magnitude;
+                if (!_zetaManual && !_zetaLearned && _hoopFitR.Band != null && (_zetaFitAt < 0 || Time.frameCount - _zetaFitAt > 120)) ZetaFit(hr, kr, eyeF0, eyeR0, restF, restR, rot, up, right, thigh);
+                if (!_zetaManual) ZetaLearn((cordF - restF) / thigh, (cordR - restR) / thigh, Vector3.Dot(kr - hr, up) < -0.57f * (kr - hr).magnitude && Vector3.Dot(kl - hl, up) < -0.57f * (kl - hl).magnitude);
                 _zetaF.Update(cordF, restF, thigh, dt); _zetaR.Update(cordR, restR, thigh, dt);
             }
             else { _driveF.Update(cordF, restF, thigh, dt); _driveR.Update(cordR, restR, thigh, dt); }
@@ -1092,12 +1103,21 @@ namespace Harness
             {
                 Vector3 seatB = Swing("zback_L", "SOCKET_zback_L", zB, (eyeF - zB).normalized, _thighR, ls);
                 Vector3 seatF = Swing("zfront_L", "SOCKET_zfront_L", zF, (eyeR - zF).normalized, _thighR, ls);
-                Line(_cords[0], seatB, eyeF, ls); Line(_cords[1], seatF, eyeR, ls);
-                End("end_zback_thigh", seatB, eyeF, "SOCKET_zback_L", "SOCKET_cord_front", _thighR, ls);
-                End("end_zfront_thigh", seatF, eyeR, "SOCKET_zfront_L", "SOCKET_cord_rear", _thighR, ls);
-                End("end_zback_piston", eyeF, seatB, "SOCKET_cord_front", "SOCKET_zback_L", _guideF, ps);
-                End("end_zfront_piston", eyeR, seatF, "SOCKET_cord_rear", "SOCKET_zfront_L", _guideR, ps);
-                if (CordLogUntil > Time.time && Time.frameCount % 6 == 0) CordGap(anim, seatB, eyeF, seatF, eyeR, mid, right, up);
+                // each cord lies on her skin where a straight line would go through it
+                long tp = Perf.Now;
+                if (_patch == null && !_patchFailed && _hoopFitR.Band != null) BuildPatch(anim, eyeF0, eyeR0, zB, zF, right);
+                if (_patch != null && WrapOn) Skin(_patch);
+                float clear = 0.0014f * ls + 0.0012f;
+                SkinPatch skin = WrapOn ? _patch : null;
+                _pathN[0] = Wrap(skin, N(seatB), N(eyeF), clear, _path[0]); _pathN[1] = Wrap(skin, N(seatF), N(eyeR), clear, _path[1]);
+                DrawPath(0, ls); DrawPath(1, ls);
+                Perf.Add(Perf.Wrap, tp);
+                // the clips point along the cord's first and last stretch
+                End("end_zback_thigh", seatB, V(_path[0][1]), "SOCKET_zback_L", "SOCKET_cord_front", _thighR, ls);
+                End("end_zfront_thigh", seatF, V(_path[1][1]), "SOCKET_zfront_L", "SOCKET_cord_rear", _thighR, ls);
+                End("end_zback_piston", eyeF, V(_path[0][_pathN[0] - 2]), "SOCKET_cord_front", "SOCKET_zback_L", _guideF, ps);
+                End("end_zfront_piston", eyeR, V(_path[1][_pathN[1] - 2]), "SOCKET_cord_rear", "SOCKET_zfront_L", _guideR, ps);
+                if (CordLogUntil > Time.time && Time.frameCount % 6 == 0) CordGap(anim, mid, right, up);
             }
             else
             {
@@ -1437,7 +1457,7 @@ namespace Harness
 
         /// <summary>Diagnostics while cords are logged: how far each Zeta cord stays outside her skin, nearest vertex and its normal, mm (negative = inside).
         /// The last 15 mm at each end are left out, where the cord meets its ring or eye.</summary>
-        private void CordGap(Animator anim, Vector3 a0, Vector3 a1, Vector3 b0, Vector3 b1, Vector3 mid, Vector3 right, Vector3 up)
+        private void CordGap(Animator anim, Vector3 mid, Vector3 right, Vector3 up)
         {
             var smr = HarnessController.FindBody(anim);
             if (smr == null) return;
@@ -1445,19 +1465,30 @@ namespace Harness
             Vector3[] nl = _bakeMesh.normals; Quaternion r = smr.transform.rotation;
             var ci = System.Globalization.CultureInfo.InvariantCulture;
             _gapLog.Append(Time.time.ToString("0.000", ci));
-            foreach (var (p0, p1) in new[] { (a0, a1), (b0, b1) })
+            for (int c = 0; c < 2; c++)
             {
-                float len = (p1 - p0).magnitude, worst = 9f, at = 0f; Vector3 wq = Vector3.zero;
-                NVector3 lo = N(Vector3.Min(p0, p1)) - new NVector3(0.08f), hi = N(Vector3.Max(p0, p1)) + new NVector3(0.08f);
+                NVector3[] path = _path[c]; int pn = _pathN[c];
+                float len = 0f; for (int j = 0; j + 1 < pn; j++) len += NVector3.Distance(path[j], path[j + 1]);
+                float worst = 9f, at = 0f; Vector3 wq = Vector3.zero;
+                NVector3 lo = path[0], hi = path[0]; for (int j = 1; j < pn; j++) { lo = NVector3.Min(lo, path[j]); hi = NVector3.Max(hi, path[j]); }
+                lo -= new NVector3(0.08f); hi += new NVector3(0.08f);
                 var inBox = new bool[w.Length];
                 for (int i = 0; i < w.Length; i++) { var q = w[i]; inBox[i] = q.x > lo.X && q.x < hi.X && q.y > lo.Y && q.y < hi.Y && q.z > lo.Z && q.z < hi.Z; }
                 var near = new List<int>();
                 for (int i = 0; i < tris.Length; i += 3) if (inBox[tris[i]] || inBox[tris[i + 1]] || inBox[tris[i + 2]]) near.Add(i);
-                for (int k = 0; k <= 24; k++)
+                for (int k = 0; k <= 32; k++)
                 {
-                    float f = k / 24f, along = f * len;
+                    float f = k / 32f, along = f * len;
                     if (along < 0.015f || along > len - 0.015f) continue;
-                    NVector3 p = N(Vector3.Lerp(p0, p1, f)); int best = -1; float bd = 1e9f; NVector3 bq = default;
+                    // the point that far along the bent cord
+                    NVector3 p = path[pn - 1]; float run = 0f;
+                    for (int j = 0; j + 1 < pn; j++)
+                    {
+                        float sl = NVector3.Distance(path[j], path[j + 1]);
+                        if (along <= run + sl) { p = path[j] + (path[j + 1] - path[j]) * ((along - run) / MathF.Max(sl, 1e-6f)); break; }
+                        run += sl;
+                    }
+                    int best = -1; float bd = 1e9f; NVector3 bq = default;
                     foreach (int i in near)
                     {
                         NVector3 q = ClosestOnTri(p, N(w[tris[i]]), N(w[tris[i + 1]]), N(w[tris[i + 2]])); float d = NVector3.DistanceSquared(p, q);
@@ -1471,7 +1502,14 @@ namespace Harness
                     float s = NVector3.Dot(p - bq, fn), g = s < 0f ? -MathF.Sqrt(bd) : MathF.Sqrt(bd);
                     if (g < worst) { worst = g; at = f; wq = new Vector3(bq.X, bq.Y, bq.Z); }
                 }
-                _gapLog.Append(' ').Append((worst * 1000f).ToString("0.0", ci)).Append('@').Append(at.ToString("0.00", ci)).Append(':').Append((Vector3.Dot(wq - mid, right) * 1000f).ToString("0", ci)).Append(',').Append((Vector3.Dot(wq - mid, up) * 1000f).ToString("0", ci));
+                _gapLog.Append(' ').Append((worst * 1000f).ToString("0.0", ci)).Append('@').Append(at.ToString("0.00", ci)).Append(':').Append((Vector3.Dot(wq - mid, right) * 1000f).ToString("0", ci)).Append(',').Append((Vector3.Dot(wq - mid, up) * 1000f).ToString("0", ci)).Append(',').Append(pn - 2);
+            }
+            // how well the patch the cords are laid on matches her skin as drawn, mm
+            if (_patch != null)
+            {
+                float err = 0f;
+                for (int k = 0; k < _patch.Vert.Length; k++) err = MathF.Max(err, NVector3.DistanceSquared(_patch.World[k], N(w[_patch.Vert[k]])));
+                _gapLog.Append(" e").Append((MathF.Sqrt(err) * 1000f).ToString("0.0", ci));
             }
             _gapLog.Append(';');
         }
@@ -1492,6 +1530,53 @@ namespace Harness
             float va = d3 * d6 - d5 * d4;
             if (va <= 0f && (d4 - d3) >= 0f && (d5 - d6) >= 0f) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
             float den = 1f / (va + vb + vc); return a + ab * (vb * den) + ac * (vc * den);
+        }
+
+        /// <summary>
+        /// Sets each Zeta cord's length to this body: where its ring would be with her right thigh at the middle of the walk's swing, and at the end of the
+        /// swing that pulls it. From the first the cord starts to pull; at the second its piston is fully out.
+        /// </summary>
+        private void ZetaFit(Vector3 hip, Vector3 knee, Vector3 eyeF, Vector3 eyeR, float restF, float restR, Quaternion rot, Vector3 up, Vector3 right, float thigh)
+        {
+            _zetaFitAt = Time.frameCount;
+            float len = (knee - hip).magnitude;
+            float Pull(string key, Vector3 eye, float rest, float angle)
+            {
+                Vector3 dir = Quaternion.AngleAxis(angle, right) * -up;
+                Quaternion q = Quaternion.FromToRotation(rot * (_hoopR - _hipR).normalized, dir) * rot;
+                Vector3 bar = hip + dir * (len * Plugin.HoopAlongThigh.Value) + q * _hoopFitR.Local(U(Group("ring_" + key).Pivot) - _hoopR);
+                return ((bar - eye).magnitude - rest) / thigh;
+            }
+            float fMid = Pull("zback_L", eyeF, restF, WalkMiddle), fEnd = Pull("zback_L", eyeF, restF, WalkBack);
+            float rMid = Pull("zfront_L", eyeR, restR, WalkMiddle), rEnd = Pull("zfront_L", eyeR, restR, WalkForward);
+            _zetaF.Slack = fMid; _zetaF.FullAt = Mathf.Max(fEnd - fMid, 0.04f); _zetaR.Slack = rMid; _zetaR.FullAt = Mathf.Max(rEnd - rMid, 0.04f);
+            float sum = fMid + fEnd + rMid + rEnd;
+            if (float.IsNaN(_zetaLogged) || Mathf.Abs(sum - _zetaLogged) > 0.01f)
+            {
+                _zetaLogged = sum;
+                Plugin.Logger.LogInfo("[SFM-ACCEPT] zetafit: front starts at " + fMid.ToString("0.000") + ", full after " + _zetaF.FullAt.ToString("0.000") + "; rear starts at " + rMid.ToString("0.000") + ", full after " + _zetaR.FullAt.ToString("0.000"));
+            }
+        }
+
+        /// <summary>
+        /// Sets each Zeta cord's length from her own walk. Only while both thighs are within a walking swing (not raised, as in a crouch), and only from a
+        /// stretch in which the cords really moved; standing still teaches nothing and changes nothing.
+        /// </summary>
+        private void ZetaLearn(float pullF, float pullR, bool walkingPose)
+        {
+            float now = Time.time;
+            if (!walkingPose) { _learnOpen = false; return; }
+            if (!_learnOpen) { _learnOpen = true; _learnEnd = now + LearnWindow; _loF = _hiF = pullF; _loR = _hiR = pullR; return; }
+            if (pullF < _loF) _loF = pullF; if (pullF > _hiF) _hiF = pullF; if (pullR < _loR) _loR = pullR; if (pullR > _hiR) _hiR = pullR;
+            if (now < _learnEnd) return;
+            _learnOpen = false;
+            float rf = _hiF - _loF, rr = _hiR - _loR;
+            if (rf < LearnLeast || rr < LearnLeast) return;
+            float k = _zetaLearned ? 0.5f : 1f;   // the first stretch is taken whole, later ones half and half
+            float sF = _loF + rf * LearnStart, fF = rf * (LearnFull - LearnStart), sR = _loR + rr * LearnStart, fR = rr * (LearnFull - LearnStart);
+            _zetaF.Slack += (sF - _zetaF.Slack) * k; _zetaF.FullAt += (fF - _zetaF.FullAt) * k; _zetaR.Slack += (sR - _zetaR.Slack) * k; _zetaR.FullAt += (fR - _zetaR.FullAt) * k;
+            if (!_zetaLearned) Plugin.Logger.LogInfo("[SFM-ACCEPT] zetalearn: front starts at " + _zetaF.Slack.ToString("0.000") + ", full after " + _zetaF.FullAt.ToString("0.000") + "; rear starts at " + _zetaR.Slack.ToString("0.000") + ", full after " + _zetaR.FullAt.ToString("0.000"));
+            _zetaLearned = true;
         }
 
         private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)
@@ -1545,7 +1630,7 @@ namespace Harness
             if (_top != null) UnityEngine.Object.Destroy(_top);
             _top = null;
             foreach (var o in _owned) if (o != null) UnityEngine.Object.Destroy(o);
-            _owned.Clear(); _own.Clear(); _stretches.Clear(); _gammaOnly.Clear(); _zetaOnly.Clear(); _anchorF = null; _band = null; if (_markers != null) UnityEngine.Object.Destroy(_markers); _markers = null; _hoopFitL.Band = null; _hoopFitR.Band = null; _hoopFitL.Fixed.Clear(); _hoopFitR.Fixed.Clear(); _hoopFitL.Bone = _hoopFitR.Bone = null;
+            _owned.Clear(); _own.Clear(); _stretches.Clear(); _gammaOnly.Clear(); _zetaOnly.Clear(); _patch = null; _patchFailed = false; _anchorF = null; _band = null; if (_markers != null) UnityEngine.Object.Destroy(_markers); _markers = null; _hoopFitL.Band = null; _hoopFitR.Band = null; _hoopFitL.Fixed.Clear(); _hoopFitR.Fixed.Clear(); _hoopFitL.Bone = _hoopFitR.Bone = null;
             _visible = false;
         }
     }

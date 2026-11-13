@@ -11,8 +11,8 @@ namespace Harness
     internal static class Perf
     {
         public static bool On;
-        public const int Place = 0, Measure = 1, Settle = 2, Bake = 3, Cuts = 4, Refit = 5, Bow = 6, Wire = 7, Chains = 8, Stretches = 9, Survey = 10, Cords = 11, Lock = 12, Rings = 13, BakeMesh = 14, BakeFetch = 15, BakeWorld = 16, RefitWarp = 17, RefitUpload = 18, RefitCuts = 19, HoopLook = 20;
-        private static readonly string[] Names = { "place", "measure", "settle", "bake", "cuts", "refit", "bow", "wire", "chains", "stretches", "survey", "cords", "lock", "rings", "bakemesh", "bakefetch", "bakeworld", "refitwarp", "refitupload", "refitcuts", "hooplook" };
+        public const int Place = 0, Measure = 1, Settle = 2, Bake = 3, Cuts = 4, Refit = 5, Bow = 6, Wire = 7, Chains = 8, Stretches = 9, Survey = 10, Cords = 11, Lock = 12, Rings = 13, BakeMesh = 14, BakeFetch = 15, BakeWorld = 16, RefitWarp = 17, RefitUpload = 18, RefitCuts = 19, HoopLook = 20, Wrap = 21;
+        private static readonly string[] Names = { "place", "measure", "settle", "bake", "cuts", "refit", "bow", "wire", "chains", "stretches", "survey", "cords", "lock", "rings", "bakemesh", "bakefetch", "bakeworld", "refitwarp", "refitupload", "refitcuts", "hooplook", "wrap" };
         private static readonly long[] Ticks = new long[Names.Length], Max = new long[Names.Length];
         private static readonly int[] Count = new int[Names.Length];
         private static int _frames, _hitches; private static double _frameSum; private static float _frameMax, _next; private static long _alloc0;
