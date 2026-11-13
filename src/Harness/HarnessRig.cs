@@ -63,6 +63,9 @@ namespace Harness
         private readonly Transform[] _cords = new Transform[4];
         private readonly List<UnityEngine.Object> _owned = new List<UnityEngine.Object>();
         private readonly PistonDrive _driveF = new PistonDrive(), _driveR = new PistonDrive();
+        // every push in raises her arousal by how far it went (the hub's Arousal; the amounts are in our config)
+        private readonly PushCounter _pushF = new PushCounter(), _pushR = new PushCounter();
+        private int _pushes; private float _aroused, _pushLogAt;
         // Zeta: each piston follows its own cord to her right thigh. Each cord's length is set so that it starts to pull as her right leg passes the middle
         // of its swing, and the piston is fully out at the end of that swing. The game's walk swings her thighs from about 42 degrees forward to 17 back,
         // round a middle 14 degrees forward. Where that puts each ring differs from body to body, so the lengths are worked out on her (ZetaFit); these are
@@ -189,7 +192,7 @@ namespace Harness
                 _cords[i] = go.transform;
             }
             MakeWrapSegments(tube, mats[cordMat], layer);
-            _driveF.Reset(); _driveR.Reset(); _zetaF.Reset(); _zetaR.Reset();
+            _driveF.Reset(); _driveR.Reset(); _zetaF.Reset(); _zetaR.Reset(); _pushF.Reset(); _pushR.Reset();
             foreach (var kv in _own)
             {
                 if (kv.Key.StartsWith("ring_z") || kv.Key.StartsWith("end_z")) _zetaOnly.Add(kv.Value.gameObject);
@@ -1098,6 +1101,8 @@ namespace Harness
             _pistonF.localPosition = -_axisF * ((force >= 0f ? force : sF) * StrokeMetres);
             _pistonR.localPosition = -_axisR * ((force >= 0f ? force : sR) * StrokeMetres);
             Vector3 eyeF = _pistonF.TransformPoint(Sock("SOCKET_cord_front") - _cF), eyeR = _pistonR.TransformPoint(Sock("SOCKET_cord_rear") - _cR);
+            Arouse(_pushF.Update(force >= 0f ? force : sF, dt), Plugin.ArouseFront.Value);
+            Arouse(_pushR.Update(force >= 0f ? force : sR, dt), Plugin.ArouseRear.Value);
 
             if (zeta)
             {
@@ -1577,6 +1582,21 @@ namespace Harness
             _zetaF.Slack += (sF - _zetaF.Slack) * k; _zetaF.FullAt += (fF - _zetaF.FullAt) * k; _zetaR.Slack += (sR - _zetaR.Slack) * k; _zetaR.FullAt += (fR - _zetaR.FullAt) * k;
             if (!_zetaLearned) Plugin.Logger.LogInfo("[SFM-ACCEPT] zetalearn: front starts at " + _zetaF.Slack.ToString("0.000") + ", full after " + _zetaF.FullAt.ToString("0.000") + "; rear starts at " + _zetaR.Slack.ToString("0.000") + ", full after " + _zetaR.FullAt.ToString("0.000"));
             _zetaLearned = true;
+        }
+
+        private void Arouse(float travel, float perPush)
+        {
+            if (travel > 0f && travel >= Plugin.ArouseMinPush.Value && perPush > 0f)
+            {
+                float amount = travel * perPush;
+                if (RestraintHub.Hub.Arouse(amount) == null) { _pushes++; _aroused += amount; }
+            }
+            // a summary every ten seconds while it pushes, not a line per push
+            if (Time.time >= _pushLogAt)
+            {
+                if (_pushes > 0) Plugin.Logger.LogInfo("[SFM-ACCEPT] arousal: " + _pushes + " pushes, +" + _aroused.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture) + ", gauge " + RestraintHub.Hub.Arousal.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
+                _pushes = 0; _aroused = 0f; _pushLogAt = Time.time + 10f;
+            }
         }
 
         private Vector3 RestBar(string key, Vector3 hip, Vector3 knee, Vector3 modelHip, Vector3 modelHoop, Hoop h, Quaternion rot, Vector3 up)

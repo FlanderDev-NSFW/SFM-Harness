@@ -62,6 +62,17 @@ namespace Harness.Tests
             z.Update(1.01f, 1f, 1f, 0f); Check(z.Stroke == 0f, "zeta: a little slack first");
             z.Update(1.08f, 1f, 1f, 0f); Check(Math.Abs(z.Stroke - 0.5f) < 1e-4f, "zeta: half way at half the pull");
             z.Update(0.9f, 1f, 1f, 0f); Check(z.Stroke == 0f, "zeta: a shorter cord leaves the piston in");
+            var pc = new PushCounter(); float got = 0f; int n = 0;
+            float Run(float[] path) { float sum = 0f; foreach (float v in path) { float t = pc.Update(v, 1f / 60f); if (t > 0f) { sum += t; n++; } } return sum; }
+            got = Run(new[] { 0f, 0.3f, 0.6f, 1f, 0.7f, 0.4f, 0.1f, 0f });
+            Check(n == 1 && Math.Abs(got - 1f) < 1e-4f, "push: all the way out and back in is one full push");
+            n = 0; got = Run(new[] { 0.2f, 0.5f, 0.6f, 0.4f, 0.3f, 0.35f, 0.5f });
+            Check(n == 1 && Math.Abs(got - 0.3f) < 1e-4f, "push: a part push counts its share, ending where it turns");
+            n = 0; got = Run(new[] { 0.5f, 0.505f, 0.498f, 0.503f, 0.497f });
+            Check(n == 0, "push: tremor is no push");
+            n = 0; var still = new System.Collections.Generic.List<float> { 0.9f, 0.6f }; for (int i = 0; i < 20; i++) still.Add(0.6f);
+            got = Run(still.ToArray());
+            Check(n == 1 && Math.Abs(got - 0.3f) < 1e-4f, "push: a push that stops and rests ends there");
             var lift = new float[BeltBand.Bins]; lift[0] = 0.01f; band.Lift(lift);
             Check(Math.Abs(band.Lower[0] - 0.21f) < 0.002f && band.Lower[1] > band.Lower[3], "band: a push out spreads to its neighbours");
             band = BeltBand.From(ring, ring3, ring3, System.Numerics.Vector2.Zero, 0f, inner);
