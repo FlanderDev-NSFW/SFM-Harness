@@ -32,7 +32,7 @@ namespace Harness
 
             BeltHeight = Config.Bind("Fit", "BeltHeight", 0.55f, "Where the belt sits, from hip joints (0) to chest (1).");
             PelvisSize = Config.Bind("Fit", "PelvisSize", 0.6f, "Pistons and guides, against the rest of the harness.");
-            Mode = Config.Bind("Drive", "Mode", DriveMode.Zeta, "Zeta: both cords run to her right thigh, one behind and one in front, so the pistons take turns in step with her stride. Gamma: the crossed cords, both pistons pull when her legs part.");
+            Mode = Config.Bind("Drive", "Mode", DriveMode.Gamma, "Gamma: the crossed cords, both pistons pull when her legs part. Zeta: both cords run to her right thigh, one behind and one in front, so the pistons take turns in step with her stride.");
             FrontSeat = Config.Bind("Fit", "FrontSeat", 0f, "Moves the front guide out (+) or in (-), in mm, from where the fit puts it.");
             Size = Config.Bind("Fit", "Size", 0.78f, "Overall size of the hardware and straps, against her body.");
             GuideDrop = Config.Bind("Fit", "GuideDrop", 0.03f, "How far the centre of each guide band sits below its anchor in her pelvis, in model metres.");
