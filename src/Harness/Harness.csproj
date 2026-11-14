@@ -4,7 +4,7 @@
   <PropertyGroup>
     <AssemblyName>Harness</AssemblyName>
     <RootNamespace>Harness</RootNamespace>
-    <Version>2.0.0</Version>
+    <Version>2.1.0</Version>
     <Description>Harness - SecretFlasherManaka BepInEx IL2CPP mod</Description>
     <!-- Compiles against RestraintHub (build/SfmMod.targets); players install it separately. -->
     <SfmUsesRestraintHub>true</SfmUsesRestraintHub>

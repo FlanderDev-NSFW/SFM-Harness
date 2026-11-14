@@ -1,4 +1,4 @@
-# Harness 2.0.0
+# Harness 2.1.0
 
 A harness for **Secret Flasher Manaka**: a belt around her waist, hoops around her thighs and two pistons between her legs,
 driven by crossed cords from the thigh hoops - they move as she moves her legs. Fitted to her body: sized and shaped to her
@@ -10,7 +10,7 @@ Model: made for this mod by FlanderDev, the design after fan art by [yakou450770
 ## Requirements
 - Secret Flasher Manaka (tested with v1.1.3)
 - BepInEx 6 for IL2CPP (tested with build 738)
-- **RestraintHub 2.0.0** or newer (2.x)
+- **RestraintHub 2.1.0** or newer (2.x)
 
 ## Install
 Extract the zip into the game folder (the folder with `SecretFlasherManaka.exe`). You get `BepInEx/plugins/Harness/`.
@@ -18,6 +18,9 @@ Extract the zip into the game folder (the folder with `SecretFlasherManaka.exe`)
 ## How to use
 Open the restraint panel with `U` and click **Harness** (in Wearables). Hold `F` to struggle free. It holds no body part, so it
 can be worn together with the other restraints, and it blocks none of her actions.
+
+Every push of a piston raises her arousal (the pink bar on the left), by how far it went in (`Arousal.FrontPerPush` /
+`RearPerPush` in the settings; RestraintHub's `Arousal.Scale` scales all restraints, 0 = off).
 
 ## Settings
 `BepInEx/config/FlanderDev.SFM.Harness.cfg` (created on the first start). Most useful:
